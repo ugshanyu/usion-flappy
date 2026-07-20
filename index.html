@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Flappy</title>
+<script src="https://usions.com/usion-sdk.js"></script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #000000; --muted: #666666; --line: #e5e5e5;
+    --panel: #ffffff; --accent: #0070f3; --gold: #b8860b;
+  }
+  .dark {
+    --bg: #000000; --fg: #ffffff; --muted: #999999; --line: #222222;
+    --panel: #0a0a0a; --gold: #ffd700;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+    user-select: none; -webkit-user-select: none; touch-action: manipulation;
+  }
+  #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 24px;
+    background: color-mix(in srgb, var(--bg) 55%, transparent);
+    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  }
+  .hidden { display: none !important; }
+  h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .hint { font-size: 15px; color: var(--muted); text-align: center; }
+  .panel {
+    width: min(340px, 92vw); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .score-row { display: flex; justify-content: space-around; text-align: center; }
+  .score-row .num { font-size: 30px; font-weight: 700; }
+  .score-row .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 2px; }
+  .btn {
+    appearance: none; border: none; cursor: pointer; width: 100%;
+    background: var(--fg); color: var(--bg); font-size: 16px; font-weight: 600;
+    padding: 14px; border-radius: 10px; min-height: 48px;
+  }
+  .btn:active { opacity: 0.8; }
+  .records { display: flex; flex-direction: column; gap: 0; max-height: 34vh; overflow-y: auto; }
+  .records-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+  .rec {
+    display: flex; align-items: center; gap: 10px; padding: 8px 2px;
+    border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  .rec:last-child { border-bottom: none; }
+  .rec .rank { width: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .rec img, .rec .ph {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--line);
+    flex-shrink: 0; object-fit: cover; display: flex; align-items: center;
+    justify-content: center; font-size: 12px; color: var(--muted);
+  }
+  .rec .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rec .sc { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rec.me .nm { font-weight: 700; }
+  .rec.me .rank { color: var(--accent); }
+  .empty { font-size: 13px; color: var(--muted); text-align: center; padding: 10px 0; }
+  #hud {
+    position: absolute; top: max(18px, env(safe-area-inset-top)); left: 0; right: 0;
+    text-align: center; font-size: 44px; font-weight: 700; pointer-events: none;
+    font-variant-numeric: tabular-nums; text-shadow: 0 1px 0 var(--bg);
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud" class="hidden">0</div>
+
+<div id="start" class="overlay">
+  <h1 id="t-title">Flappy</h1>
+  <p class="hint" id="t-tap">Tap to flap. Don't hit the pipes.</p>
+</div>
+
+<div id="over" class="overlay hidden">
+  <div class="panel">
+    <div class="score-row">
+      <div><div class="num" id="final-score">0</div><div class="lbl" id="t-score">Score</div></div>
+      <div><div class="num" id="best-score">0</div><div class="lbl" id="t-best">Best</div></div>
+    </div>
+    <div>
+      <div class="records-title" id="t-records">Friends' records</div>
+      <div class="records" id="records"><div class="empty" id="t-loading">Loading…</div></div>
+    </div>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- i18n ----------
+  var STR = {
+    en: { title: 'Flappy', tap: "Tap to flap. Don't hit the pipes.", score: 'Score', best: 'Best',
+          records: "Friends' records", loading: 'Loading…', again: 'Play again',
+          empty: 'No friend records yet — invite friends and beat their scores!', you: 'You' },
+    mn: { title: 'Flappy', tap: 'Товшиж нис. Хоолойд бүү мөргө.', score: 'Оноо', best: 'Дээд',
+          records: 'Найзуудын дээд амжилт', loading: 'Уншиж байна…', again: 'Дахин тоглох',
+          empty: 'Найзын амжилт алга — найзаа урьж, амжилтыг нь давaарай!', you: 'Та' }
+  };
+  var L = STR.en;
+
+  function applyStrings() {
+    document.getElementById('t-title').textContent = L.title;
+    document.getElementById('t-tap').textContent = L.tap;
+    document.getElementById('t-score').textContent = L.score;
+    document.getElementById('t-best').textContent = L.best;
+    document.getElementById('t-records').textContent = L.records;
+    document.getElementById('again').textContent = L.again;
+  }
+
+  // ---------- canvas ----------
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- theme ----------
+  var dark = false;
+  function applyTheme(t) {
+    dark = t === 'dark';
+    document.documentElement.classList.toggle('dark', dark);
+    document.body.classList.toggle('dark', dark);
+  }
+
+  // ---------- game state ----------
+  var S = { READY: 0, PLAY: 1, DEAD: 2 };
+  var state = S.READY;
+  var bird, pipes, score, best = 0, tPrev = 0, deadAt = 0, submitted = false;
+
+  var GRAVITY = 1900, FLAP = -560, PIPE_SPEED = 165, PIPE_EVERY = 1.45;
+  var pipeTimer = 0;
+
+  function gapSize() { return Math.max(150, Math.min(185, H * 0.24)); }
+  function birdX() { return Math.max(70, W * 0.28); }
+
+  function reset() {
+    bird = { y: H * 0.45, vy: 0, r: 14, wing: 0 };
+    pipes = []; score = 0; pipeTimer = 0; submitted = false;
+    document.getElementById('hud').textContent = '0';
+  }
+
+  function spawnPipe() {
+    var gap = gapSize();
+    var margin = 60;
+    var cy = margin + gap / 2 + Math.random() * (H - 2 * (margin + gap / 2));
+    pipes.push({ x: W + 40, cy: cy, gap: gap, passed: false });
+  }
+
+  function flap() {
+    if (state === S.READY) {
+      state = S.PLAY;
+      document.getElementById('start').classList.add('hidden');
+      document.getElementById('hud').classList.remove('hidden');
+    }
+    if (state === S.PLAY) bird.vy = FLAP;
+    if (state === S.DEAD && performance.now() - deadAt > 600) restart();
+  }
+
+  function restart() {
+    document.getElementById('over').classList.add('hidden');
+    document.getElementById('hud').classList.remove('hidden');
+    reset(); state = S.PLAY; bird.vy = FLAP;
+  }
+
+  function die() {
+    state = S.DEAD; deadAt = performance.now();
+    document.getElementById('hud').classList.add('hidden');
+    if (score > best) best = score;
+    document.getElementById('final-score').textContent = String(score);
+    document.getElementById('best-score').textContent = String(best);
+    document.getElementById('over').classList.remove('hidden');
+    submitAndLoadRecords();
+  }
+
+  // ---------- update / render ----------
+  function update(dt) {
+    if (state !== S.PLAY) {
+      if (state === S.READY) bird.y = H * 0.45 + Math.sin(performance.now() / 350) * 8;
+      return;
+    }
+    bird.vy += GRAVITY * dt;
+    bird.y += bird.vy * dt;
+    bird.wing += dt * 14;
+
+    pipeTimer += dt;
+    if (pipeTimer >= PIPE_EVERY) { pipeTimer = 0; spawnPipe(); }
+
+    var bx = birdX();
+    for (var i = pipes.length - 1; i >= 0; i--) {
+      var p = pipes[i];
+      p.x -= PIPE_SPEED * dt;
+      if (!p.passed && p.x + 34 < bx - bird.r) {
+        p.passed = true; score++;
+        document.getElementById('hud').textContent = String(score);
+      }
+      if (p.x < -80) pipes.splice(i, 1);
+      // collision (AABB vs circle, pipes are 68 wide)
+      if (Math.abs(p.x - bx) < 34 + bird.r) {
+        var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
+        if (bird.y - bird.r < top || bird.y + bird.r > bot) { die(); return; }
+      }
+    }
+    if (bird.y + bird.r > H - 4 || bird.y - bird.r < -40) { die(); return; }
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    var fg = dark ? '#ffffff' : '#000000';
+    var line = dark ? '#2a2a2a' : '#e5e5e5';
+
+    // ground line
+    ctx.strokeStyle = line; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, H - 3); ctx.lineTo(W, H - 3); ctx.stroke();
+
+    // pipes — flat outlined rects, minimalist
+    for (var i = 0; i < pipes.length; i++) {
+      var p = pipes[i], top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
+      ctx.fillStyle = fg;
+      ctx.fillRect(p.x - 34, -10, 68, top + 10);
+      ctx.fillRect(p.x - 34, bot, 68, H - bot - 3);
+      // lip
+      ctx.fillRect(p.x - 40, top - 14, 80, 14);
+      ctx.fillRect(p.x - 40, bot, 80, 14);
+    }
+
+    // bird — flat circle + wing + eye, accent color
+    var bx = birdX();
+    ctx.save();
+    ctx.translate(bx, bird.y);
+    var tilt = Math.max(-0.5, Math.min(0.9, (bird.vy || 0) / 900));
+    ctx.rotate(state === S.PLAY ? tilt : 0);
+    ctx.fillStyle = '#0070f3';
+    ctx.beginPath(); ctx.arc(0, 0, bird.r, 0, Math.PI * 2); ctx.fill();
+    // wing
+    ctx.fillStyle = dark ? '#000' : '#fff';
+    var w = Math.sin(bird.wing) * 4;
+    ctx.beginPath(); ctx.ellipse(-4, 2 + w, 7, 4.5, -0.4, 0, Math.PI * 2); ctx.fill();
+    // eye
+    ctx.beginPath(); ctx.arc(6, -4, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  function loop(t) {
+    var dt = Math.min(0.032, (t - tPrev) / 1000 || 0);
+    tPrev = t;
+    update(dt); render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  function onTap(e) { e.preventDefault(); flap(); }
+  document.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && e.target.closest('.btn')) return;
+    onTap(e);
+  }, { passive: false });
+  document.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); flap(); }
+  });
+  document.getElementById('again').addEventListener('click', function () { restart(); });
+
+  // ---------- leaderboard ----------
+  var sdkReady = false;
+
+  function submitAndLoadRecords() {
+    var recEl = document.getElementById('records');
+    recEl.innerHTML = '<div class="empty">' + L.loading + '</div>';
+    if (!sdkReady || !window.Usion || !Usion.leaderboard) {
+      recEl.innerHTML = '<div class="empty">' + L.empty + '</div>';
+      return;
+    }
+    var submitP = Promise.resolve();
+    if (!submitted && score > 0) {
+      submitted = true;
+      submitP = Usion.leaderboard.submit(score).then(function (r) {
+        if (r && typeof r.best === 'number') {
+          best = Math.max(best, r.best);
+          document.getElementById('best-score').textContent = String(best);
+        }
+      }).catch(function () {});
+    }
+    submitP.then(function () {
+      return Usion.leaderboard.friends({ limit: 20 });
+    }).then(function (entries) {
+      renderRecords(entries || []);
+    }).catch(function () {
+      recEl.innerHTML = '<div class="empty">' + L.empty + '</div>';
+    });
+  }
+
+  function renderRecords(entries) {
+    var recEl = document.getElementById('records');
+    if (!entries.length) {
+      recEl.innerHTML = '<div class="empty">' + L.empty + '</div>';
+      return;
+    }
+    recEl.innerHTML = '';
+    entries.forEach(function (e) {
+      var row = document.createElement('div');
+      row.className = 'rec' + (e.is_me ? ' me' : '');
+      var rank = document.createElement('div'); rank.className = 'rank';
+      rank.textContent = String(e.rank);
+      var av;
+      if (e.avatar) { av = document.createElement('img'); av.src = e.avatar; av.alt = ''; }
+      else { av = document.createElement('div'); av.className = 'ph'; av.textContent = (e.name || '?').charAt(0).toUpperCase(); }
+      var nm = document.createElement('div'); nm.className = 'nm';
+      nm.textContent = e.is_me ? L.you : (e.name || 'Player');
+      var sc = document.createElement('div'); sc.className = 'sc';
+      sc.textContent = String(e.score);
+      row.appendChild(rank); row.appendChild(av); row.appendChild(nm); row.appendChild(sc);
+      recEl.appendChild(row);
+    });
+  }
+
+  // ---------- boot ----------
+  reset();
+  requestAnimationFrame(function (t) { tPrev = t; requestAnimationFrame(loop); });
+
+  function boot(config) {
+    sdkReady = true;
+    applyTheme((config && config.theme) || (window.Usion && Usion.getTheme && Usion.getTheme()) || 'light');
+    var lang = (config && config.language) || (Usion.getLanguage && Usion.getLanguage()) || 'en';
+    L = STR[lang] || STR.en;
+    applyStrings();
+    if (Usion.leaderboard && Usion.leaderboard.me) {
+      Usion.leaderboard.me().then(function (r) {
+        if (r && typeof r.score === 'number') best = Math.max(best, r.score);
+      }).catch(function () {});
+    }
+    if (Usion.claimBackButton) {
+      Usion.claimBackButton(function () {
+        if (state === S.PLAY) { die(); return true; }
+        return false;
+      });
+    }
+  }
+
+  if (window.Usion && typeof Usion.init === 'function') {
+    Usion.init(boot);
+  } else {
+    // Standalone (outside the Usion host): playable, records disabled.
+    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark ? 'dark' : 'light');
+    applyStrings();
+  }
+})();
+</script>
+</body>
+</html>

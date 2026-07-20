@@ -8,11 +8,11 @@
 <style>
   :root {
     --bg: #ffffff; --fg: #000000; --muted: #666666; --line: #e5e5e5;
-    --panel: #ffffff; --accent: #0070f3; --gold: #b8860b;
+    --panel: #ffffff; --accent: #0070f3;
   }
   .dark {
     --bg: #000000; --fg: #ffffff; --muted: #999999; --line: #222222;
-    --panel: #0a0a0a; --gold: #ffd700;
+    --panel: #0a0a0a;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -26,25 +26,32 @@
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 16px; padding: 24px;
     background: color-mix(in srgb, var(--bg) 55%, transparent);
-    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    opacity: 1; transition: opacity 160ms ease;
   }
-  .hidden { display: none !important; }
+  .overlay.hidden { display: none; }
   h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
   .hint { font-size: 15px; color: var(--muted); text-align: center; }
   .panel {
     width: min(340px, 92vw); background: var(--panel); border: 1px solid var(--line);
     border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px;
+    animation: rise 220ms cubic-bezier(0.21, 1.02, 0.73, 1);
   }
+  @keyframes rise { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
   .score-row { display: flex; justify-content: space-around; text-align: center; }
-  .score-row .num { font-size: 30px; font-weight: 700; }
+  .score-row .num { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .score-row .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 2px; }
+  #new-best {
+    display: none; text-align: center; font-size: 13px; font-weight: 700;
+    color: var(--accent); letter-spacing: 0.4px;
+  }
+  #new-best.show { display: block; animation: rise 260ms ease; }
   .btn {
     appearance: none; border: none; cursor: pointer; width: 100%;
     background: var(--fg); color: var(--bg); font-size: 16px; font-weight: 600;
     padding: 14px; border-radius: 10px; min-height: 48px;
   }
   .btn:active { opacity: 0.8; }
-  .records { display: flex; flex-direction: column; gap: 0; max-height: 34vh; overflow-y: auto; }
+  .records { display: flex; flex-direction: column; max-height: 32vh; overflow-y: auto; }
   .records-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
   .rec {
     display: flex; align-items: center; gap: 10px; padding: 8px 2px;
@@ -66,7 +73,10 @@
     position: absolute; top: max(18px, env(safe-area-inset-top)); left: 0; right: 0;
     text-align: center; font-size: 44px; font-weight: 700; pointer-events: none;
     font-variant-numeric: tabular-nums; text-shadow: 0 1px 0 var(--bg);
+    transition: transform 120ms ease; will-change: transform;
   }
+  #hud.pop { transform: scale(1.18); }
+  #hud.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -84,6 +94,7 @@
       <div><div class="num" id="final-score">0</div><div class="lbl" id="t-score">Score</div></div>
       <div><div class="num" id="best-score">0</div><div class="lbl" id="t-best">Best</div></div>
     </div>
+    <div id="new-best">New record!</div>
     <div>
       <div class="records-title" id="t-records">Friends' records</div>
       <div class="records" id="records"><div class="empty" id="t-loading">Loading…</div></div>
@@ -100,10 +111,12 @@
   var STR = {
     en: { title: 'Flappy', tap: "Tap to flap. Don't hit the pipes.", score: 'Score', best: 'Best',
           records: "Friends' records", loading: 'Loading…', again: 'Play again',
-          empty: 'No friend records yet — invite friends and beat their scores!', you: 'You' },
+          empty: 'No friend records yet — invite friends and beat their scores!', you: 'You',
+          newBest: 'New record!' },
     mn: { title: 'Flappy', tap: 'Товшиж нис. Хоолойд бүү мөргө.', score: 'Оноо', best: 'Дээд',
           records: 'Найзуудын дээд амжилт', loading: 'Уншиж байна…', again: 'Дахин тоглох',
-          empty: 'Найзын амжилт алга — найзаа урьж, амжилтыг нь давaарай!', you: 'Та' }
+          empty: 'Найзын амжилт алга — найзаа урьж, амжилтыг нь давaарай!', you: 'Та',
+          newBest: 'Шинэ дээд амжилт!' }
   };
   var L = STR.en;
 
@@ -114,16 +127,18 @@
     document.getElementById('t-best').textContent = L.best;
     document.getElementById('t-records').textContent = L.records;
     document.getElementById('again').textContent = L.again;
+    document.getElementById('new-best').textContent = L.newBest;
   }
 
-  // ---------- canvas ----------
+  // ---------- canvas (opaque + desynchronized for smoother compositing) ----------
   var canvas = document.getElementById('game');
-  var ctx = canvas.getContext('2d');
+  var ctx = canvas.getContext('2d', { alpha: false, desynchronized: true }) ||
+            canvas.getContext('2d');
   var W = 0, H = 0, DPR = 1;
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth; H = window.innerHeight;
-    canvas.width = W * DPR; canvas.height = H * DPR;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
   window.addEventListener('resize', resize);
@@ -131,86 +146,138 @@
 
   // ---------- theme ----------
   var dark = false;
+  var COL = { bg: '#ffffff', fg: '#000000', line: '#e5e5e5', soft: '#f2f2f2' };
   function applyTheme(t) {
     dark = t === 'dark';
     document.documentElement.classList.toggle('dark', dark);
     document.body.classList.toggle('dark', dark);
+    COL = dark
+      ? { bg: '#000000', fg: '#ffffff', line: '#2a2a2a', soft: '#141414' }
+      : { bg: '#ffffff', fg: '#000000', line: '#e5e5e5', soft: '#f2f2f2' };
   }
+
+  // ---------- tuning ----------
+  var GRAVITY = 1900, FLAP = -560;
+  var BASE_SPEED = 160, MAX_SPEED = 235;     // px/s, ramps with score
+  var PIPE_W = 68, LIP = 14;
+  var PIPE_SPACING = 250;                    // px between pipe centers (distance-based)
+  var FIXED_DT = 1 / 120;                    // simulation step — device-independent
+
+  function speedFor(sc) { return Math.min(MAX_SPEED, BASE_SPEED + sc * 1.6); }
+  function gapFor(sc) {
+    var base = Math.max(150, Math.min(190, H * 0.25));
+    var tighten = Math.min(34, sc * 0.7);    // gently tightens until ~score 48
+    return Math.max(138, base - tighten);
+  }
+  function birdX() { return Math.max(70, W * 0.28); }
 
   // ---------- game state ----------
   var S = { READY: 0, PLAY: 1, DEAD: 2 };
   var state = S.READY;
-  var bird, pipes, score, best = 0, tPrev = 0, deadAt = 0, submitted = false;
-
-  var GRAVITY = 1900, FLAP = -560, PIPE_SPEED = 165, PIPE_EVERY = 1.45;
-  var pipeTimer = 0;
-
-  function gapSize() { return Math.max(150, Math.min(185, H * 0.24)); }
-  function birdX() { return Math.max(70, W * 0.28); }
+  var bird, pipes, clouds, score, best = 0, deadAt = 0, submitted = false;
+  var distSinceSpawn, shake, flash;
 
   function reset() {
-    bird = { y: H * 0.45, vy: 0, r: 14, wing: 0 };
-    pipes = []; score = 0; pipeTimer = 0; submitted = false;
-    document.getElementById('hud').textContent = '0';
+    bird = { y: H * 0.45, py: H * 0.45, vy: 0, wing: 0, r: 14 };
+    pipes = []; score = 0; submitted = false;
+    distSinceSpawn = PIPE_SPACING * 0.55;    // first pipe arrives quickly but fairly
+    shake = 0; flash = 0;
+    if (!clouds) {
+      clouds = [];
+      for (var i = 0; i < 5; i++) {
+        clouds.push({ x: Math.random() * W, y: 40 + Math.random() * (H * 0.5),
+                      r: 14 + Math.random() * 22, v: 0.22 + Math.random() * 0.16 });
+      }
+    }
+    setHud(0);
+  }
+
+  var hudEl = document.getElementById('hud');
+  function setHud(n) {
+    hudEl.textContent = String(n);
+    hudEl.classList.remove('pop');
+    void hudEl.offsetWidth;                  // restart the pop transition
+    hudEl.classList.add('pop');
+    setTimeout(function () { hudEl.classList.remove('pop'); }, 130);
   }
 
   function spawnPipe() {
-    var gap = gapSize();
-    var margin = 60;
-    var cy = margin + gap / 2 + Math.random() * (H - 2 * (margin + gap / 2));
-    pipes.push({ x: W + 40, cy: cy, gap: gap, passed: false });
+    var gap = gapFor(score);
+    var m = 70;
+    var lo = m + gap / 2, hi = H - m - gap / 2;
+    var prev = pipes.length ? pipes[pipes.length - 1].cy : H / 2;
+    // Bias toward reachable positions: cap the jump from the previous gap.
+    var maxJump = H * 0.38;
+    var cy = lo + Math.random() * Math.max(1, hi - lo);
+    cy = Math.max(prev - maxJump, Math.min(prev + maxJump, cy));
+    cy = Math.max(lo, Math.min(hi, cy));
+    pipes.push({ x: W + 60, px: W + 60, cy: cy, gap: gap, passed: false });
   }
 
   function flap() {
     if (state === S.READY) {
       state = S.PLAY;
       document.getElementById('start').classList.add('hidden');
-      document.getElementById('hud').classList.remove('hidden');
+      hudEl.classList.remove('hidden');
     }
     if (state === S.PLAY) bird.vy = FLAP;
-    if (state === S.DEAD && performance.now() - deadAt > 600) restart();
+    if (state === S.DEAD && performance.now() - deadAt > 700) restart();
   }
 
   function restart() {
     document.getElementById('over').classList.add('hidden');
-    document.getElementById('hud').classList.remove('hidden');
+    document.getElementById('new-best').classList.remove('show');
+    hudEl.classList.remove('hidden');
     reset(); state = S.PLAY; bird.vy = FLAP;
   }
 
   function die() {
     state = S.DEAD; deadAt = performance.now();
-    document.getElementById('hud').classList.add('hidden');
-    if (score > best) best = score;
+    shake = 1; flash = 1;
+    if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+    hudEl.classList.add('hidden');
+    var isNewBest = score > best && score > 0;
+    if (isNewBest) best = score;
     document.getElementById('final-score').textContent = String(score);
     document.getElementById('best-score').textContent = String(best);
+    document.getElementById('new-best').classList.toggle('show', isNewBest);
     document.getElementById('over').classList.remove('hidden');
     submitAndLoadRecords();
   }
 
-  // ---------- update / render ----------
-  function update(dt) {
-    if (state !== S.PLAY) {
-      if (state === S.READY) bird.y = H * 0.45 + Math.sin(performance.now() / 350) * 8;
-      return;
-    }
+  // ---------- simulation (fixed step) ----------
+  function step(dt) {
+    if (state === S.READY) { bird.py = bird.y; bird.y = H * 0.45 + Math.sin(performance.now() / 350) * 8; return; }
+    // decay effects even when dead so the crash settles smoothly
+    shake = Math.max(0, shake - dt * 3.2);
+    flash = Math.max(0, flash - dt * 4.5);
+    if (state !== S.PLAY) return;
+
+    bird.py = bird.y;
     bird.vy += GRAVITY * dt;
     bird.y += bird.vy * dt;
     bird.wing += dt * 14;
 
-    pipeTimer += dt;
-    if (pipeTimer >= PIPE_EVERY) { pipeTimer = 0; spawnPipe(); }
+    var v = speedFor(score);
+    distSinceSpawn += v * dt;
+    if (distSinceSpawn >= PIPE_SPACING) { distSinceSpawn -= PIPE_SPACING; spawnPipe(); }
+
+    for (var i = 0; i < clouds.length; i++) {
+      var c = clouds[i];
+      c.x -= v * c.v * dt;
+      if (c.x < -c.r * 3) { c.x = W + c.r * 3; c.y = 40 + Math.random() * (H * 0.5); }
+    }
 
     var bx = birdX();
-    for (var i = pipes.length - 1; i >= 0; i--) {
-      var p = pipes[i];
-      p.x -= PIPE_SPEED * dt;
-      if (!p.passed && p.x + 34 < bx - bird.r) {
-        p.passed = true; score++;
-        document.getElementById('hud').textContent = String(score);
+    for (var j = pipes.length - 1; j >= 0; j--) {
+      var p = pipes[j];
+      p.px = p.x;
+      p.x -= v * dt;
+      if (!p.passed && p.x + PIPE_W / 2 < bx - bird.r) {
+        p.passed = true; score++; setHud(score);
       }
-      if (p.x < -80) pipes.splice(i, 1);
-      // collision (AABB vs circle, pipes are 68 wide)
-      if (Math.abs(p.x - bx) < 34 + bird.r) {
+      if (p.x < -PIPE_W - LIP) pipes.splice(j, 1);
+      if (Math.abs(p.x - bx) < PIPE_W / 2 + bird.r) {
         var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
         if (bird.y - bird.r < top || bird.y + bird.r > bot) { die(); return; }
       }
@@ -218,55 +285,90 @@
     if (bird.y + bird.r > H - 4 || bird.y - bird.r < -40) { die(); return; }
   }
 
-  function render() {
-    ctx.clearRect(0, 0, W, H);
-    var fg = dark ? '#ffffff' : '#000000';
-    var line = dark ? '#2a2a2a' : '#e5e5e5';
+  // ---------- render (interpolated between sim steps) ----------
+  function render(alpha) {
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(0, 0, W, H);
 
-    // ground line
-    ctx.strokeStyle = line; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, H - 3); ctx.lineTo(W, H - 3); ctx.stroke();
+    var sx = 0, sy = 0;
+    if (shake > 0) {
+      var m = shake * 7;
+      sx = (Math.random() * 2 - 1) * m; sy = (Math.random() * 2 - 1) * m;
+    }
+    ctx.save();
+    ctx.translate(sx, sy);
 
-    // pipes — flat outlined rects, minimalist
-    for (var i = 0; i < pipes.length; i++) {
-      var p = pipes[i], top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
-      ctx.fillStyle = fg;
-      ctx.fillRect(p.x - 34, -10, 68, top + 10);
-      ctx.fillRect(p.x - 34, bot, 68, H - bot - 3);
-      // lip
-      ctx.fillRect(p.x - 40, top - 14, 80, 14);
-      ctx.fillRect(p.x - 40, bot, 80, 14);
+    // parallax clouds — barely-there depth
+    ctx.fillStyle = COL.soft;
+    for (var i = 0; i < clouds.length; i++) {
+      var c = clouds[i];
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+      ctx.arc(c.x + c.r * 0.9, c.y + c.r * 0.25, c.r * 0.72, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    // bird — flat circle + wing + eye, accent color
+    // ground line
+    ctx.strokeStyle = COL.line; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-10, H - 3); ctx.lineTo(W + 10, H - 3); ctx.stroke();
+
+    // pipes
+    ctx.fillStyle = COL.fg;
+    for (var j = 0; j < pipes.length; j++) {
+      var p = pipes[j];
+      var x = p.px + (p.x - p.px) * alpha;
+      var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
+      ctx.fillRect(x - PIPE_W / 2, -10, PIPE_W, top + 10 - LIP);
+      ctx.fillRect(x - PIPE_W / 2 - 6, top - LIP, PIPE_W + 12, LIP);
+      ctx.fillRect(x - PIPE_W / 2 - 6, bot, PIPE_W + 12, LIP);
+      ctx.fillRect(x - PIPE_W / 2, bot + LIP, PIPE_W, H - bot - LIP - 3);
+    }
+
+    // bird
     var bx = birdX();
+    var by = bird.py + (bird.y - bird.py) * alpha;
     ctx.save();
-    ctx.translate(bx, bird.y);
+    ctx.translate(bx, by);
     var tilt = Math.max(-0.5, Math.min(0.9, (bird.vy || 0) / 900));
-    ctx.rotate(state === S.PLAY ? tilt : 0);
+    ctx.rotate(state === S.READY ? 0 : tilt);
     ctx.fillStyle = '#0070f3';
     ctx.beginPath(); ctx.arc(0, 0, bird.r, 0, Math.PI * 2); ctx.fill();
-    // wing
-    ctx.fillStyle = dark ? '#000' : '#fff';
+    ctx.fillStyle = COL.bg;
     var w = Math.sin(bird.wing) * 4;
     ctx.beginPath(); ctx.ellipse(-4, 2 + w, 7, 4.5, -0.4, 0, Math.PI * 2); ctx.fill();
-    // eye
     ctx.beginPath(); ctx.arc(6, -4, 2.4, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+
+    ctx.restore();
+
+    if (flash > 0) {
+      ctx.globalAlpha = flash * 0.35;
+      ctx.fillStyle = COL.fg;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
   }
 
+  // ---------- main loop: fixed-timestep sim + interpolated render ----------
+  var acc = 0, tPrev = 0;
   function loop(t) {
-    var dt = Math.min(0.032, (t - tPrev) / 1000 || 0);
-    tPrev = t;
-    update(dt); render();
     requestAnimationFrame(loop);
+    if (!tPrev) { tPrev = t; return; }
+    var frame = (t - tPrev) / 1000;
+    tPrev = t;
+    if (frame > 0.25) frame = FIXED_DT;      // tab was hidden — don't fast-forward
+    acc += frame;
+    var steps = 0;
+    while (acc >= FIXED_DT && steps < 8) { step(FIXED_DT); acc -= FIXED_DT; steps++; }
+    if (steps === 8) acc = 0;                // device too slow to catch up — drop time
+    render(acc / FIXED_DT);
   }
+  document.addEventListener('visibilitychange', function () { tPrev = 0; });
 
   // ---------- input ----------
-  function onTap(e) { e.preventDefault(); flap(); }
   document.addEventListener('pointerdown', function (e) {
     if (e.target.closest && e.target.closest('.btn')) return;
-    onTap(e);
+    e.preventDefault(); flap();
   }, { passive: false });
   document.addEventListener('keydown', function (e) {
     if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); flap(); }
@@ -328,7 +430,7 @@
 
   // ---------- boot ----------
   reset();
-  requestAnimationFrame(function (t) { tPrev = t; requestAnimationFrame(loop); });
+  requestAnimationFrame(loop);
 
   function boot(config) {
     sdkReady = true;
@@ -352,7 +454,6 @@
   if (window.Usion && typeof Usion.init === 'function') {
     Usion.init(boot);
   } else {
-    // Standalone (outside the Usion host): playable, records disabled.
     var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     applyTheme(prefersDark ? 'dark' : 'light');
     applyStrings();

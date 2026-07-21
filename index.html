@@ -382,7 +382,9 @@
 
   // ---------- input ----------
   document.addEventListener('pointerdown', function (e) {
-    if (e.target.closest && e.target.closest('.btn')) return;
+    // Never treat taps on the game-over card (toggle, Play again, records
+    // list) as a flap — those have their own handlers and must not restart.
+    if (e.target.closest && e.target.closest('.panel')) return;
     e.preventDefault(); flap();
   }, { passive: false });
   document.addEventListener('keydown', function (e) {

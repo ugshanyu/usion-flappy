@@ -19,9 +19,12 @@ a reusable pipe cap/body, and an optimized background. All were generated with
 the service icon as the visual reference, then chroma-keyed and prepared as
 production PNG/WebP assets.
 
-Performance is adaptive: physics runs at a fixed 120 Hz with interpolated
-rendering on every display refresh. Generated sprites are pre-scaled once at the
-active pixel ratio, and the background is cached at backing resolution.
-Low-core, low-memory, reduced-motion, or persistently slow devices switch to 1x
-canvas resolution only between runs, avoiding a mid-game resize hitch. Long
-browser stalls are discarded instead of fast-forwarding into a collision.
+Performance is adaptive: deterministic physics runs at 60 Hz while rendering is
+interpolated on every 60/90/120/144 Hz display refresh. The static background
+lives on its own opaque Canvas layer, while the pipe texture and bird sprites
+use reusable backing-resolution caches. This keeps per-frame work small without
+allocating new textures when obstacles spawn.
+Refresh-aware frame sampling detects missed frames relative to the device's
+actual cadence. Low-core, low-memory, reduced-motion, or persistently slow
+devices switch to 1x canvas resolution between runs. Long browser stalls are
+discarded instead of fast-forwarding into a collision.

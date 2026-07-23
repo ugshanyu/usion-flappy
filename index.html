@@ -48,7 +48,10 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", sans-serif;
     user-select: none; -webkit-user-select: none; touch-action: manipulation;
   }
-  #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #scene, #game {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  }
+  #scene { pointer-events: none; }
   .overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 16px; padding: 24px;
@@ -126,6 +129,7 @@
 </style>
 </head>
 <body>
+<canvas id="scene" aria-hidden="true"></canvas>
 <canvas id="game"></canvas>
 <div id="hud" class="hidden">0</div>
 
@@ -182,10 +186,13 @@
     document.getElementById('new-best').textContent = L.newBest;
   }
 
-  // ---------- canvas (opaque + desynchronized for smoother compositing) ----------
+  // ---------- layered canvas ----------
+  // The opaque scene is rendered only when assets/viewport change. The
+  // transparent gameplay layer stays small and cheap at 60–144 Hz.
+  var sceneCanvas = document.getElementById('scene');
+  var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
   var canvas = document.getElementById('game');
-  var ctx = canvas.getContext('2d', { alpha: false, desynchronized: true }) ||
-            canvas.getContext('2d');
+  var ctx = canvas.getContext('2d', { alpha: true });
   var reducedMotion = !!(window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var lowPowerMode = reducedMotion ||
@@ -193,8 +200,6 @@
     (navigator.deviceMemory && navigator.deviceMemory <= 4);
   var dprCap = lowPowerMode ? 1 : 1.5;
   var pendingLowPowerResize = false;
-  var sceneCanvas = document.createElement('canvas');
-  var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
   var pipeBodyCanvas, pipeLipCanvas, birdSprites;
   var sceneImage = new Image();
   var birdImages = [new Image(), new Image(), new Image()];
@@ -204,6 +209,7 @@
   var runtimePipeCap = null;
   var runtimePipeBody = null;
   var runtimePipeCapHeight = 0;
+  var runtimePipeBodyHeight = 0;
   var runtimeSpriteDpr = 0;
   var loadedAssetCount = 0;
   var totalAssetCount = 6;
@@ -274,8 +280,8 @@
   var BASE_SPEED = 160, MAX_SPEED = 235;     // px/s, ramps with score
   var PIPE_W = 68, LIP = 14;
   var PIPE_SPACING = 250;                    // px between pipe centers (distance-based)
-  var FIXED_DT = 1 / 120;                    // high-frequency physics + interpolation
-  var MAX_CATCH_UP_STEPS = 12;               // keeps real-time pacing down to ~10 FPS
+  var FIXED_DT = 1 / 60;                     // deterministic physics, interpolated at display rate
+  var MAX_CATCH_UP_STEPS = 6;                // keeps real-time pacing down to ~10 FPS
   var BIRD_DRAW_W = 70, BIRD_DRAW_H = 63;
   var PIPE_BODY_DRAW_W = PIPE_W + 4;
   var PIPE_CAP_DRAW_W = PIPE_BODY_DRAW_W * 1.18;
@@ -299,6 +305,7 @@
       runtimeBirdSprites = [null, null, null];
       runtimePipeCap = null;
       runtimePipeBody = null;
+      runtimePipeBodyHeight = 0;
     }
     for (var i = 0; i < birdImages.length; i++) {
       if (!runtimeBirdSprites[i] && imageReady(birdImages[i])) {
@@ -314,11 +321,34 @@
         pipeCapImage, PIPE_CAP_DRAW_W, runtimePipeCapHeight
       );
     }
+    var requiredBodyHeight = H + 20;
+    if (runtimePipeBodyHeight !== requiredBodyHeight) {
+      runtimePipeBody = null;
+      runtimePipeBodyHeight = requiredBodyHeight;
+    }
     if (!runtimePipeBody && imageReady(pipeBodyImage)) {
       runtimePipeBody = makeRuntimeSprite(
-        pipeBodyImage, PIPE_BODY_DRAW_W, 24
+        pipeBodyImage, PIPE_BODY_DRAW_W, runtimePipeBodyHeight
       );
     }
+  }
+
+  function drawPipeBody(x, y, width, height) {
+    var sourceHeight = Math.min(
+      runtimePipeBody.height,
+      Math.max(1, Math.round(height * DPR))
+    );
+    ctx.drawImage(
+      runtimePipeBody,
+      0,
+      0,
+      runtimePipeBody.width,
+      sourceHeight,
+      x,
+      y,
+      width,
+      height
+    );
   }
 
   // ---------- cached icon-style artwork ----------
@@ -616,7 +646,7 @@
 
   // ---------- render (interpolated between sim steps) ----------
   function render(alpha) {
-    ctx.drawImage(sceneCanvas, 0, 0, W, H);
+    ctx.clearRect(0, 0, W, H);
 
     var sx = 0, sy = 0;
     if (shake > 0) {
@@ -641,16 +671,13 @@
         var capH = runtimePipeCapHeight;
         var topBodyH = Math.max(1, top - capH * 0.56 + 10);
         var bottomBodyY = bot + capH * 0.56;
-        ctx.drawImage(
-          runtimePipeBody, x - generatedBodyW / 2, -10, generatedBodyW, topBodyH
-        );
+        drawPipeBody(x - generatedBodyW / 2, -10, generatedBodyW, topBodyH);
         ctx.save();
         ctx.translate(x, top);
         ctx.rotate(Math.PI);
         ctx.drawImage(runtimePipeCap, -capW / 2, 0, capW, capH);
         ctx.restore();
-        ctx.drawImage(
-          runtimePipeBody,
+        drawPipeBody(
           x - generatedBodyW / 2,
           bottomBodyY,
           generatedBodyW,
@@ -708,21 +735,62 @@
   }
 
   // ---------- main loop: fixed-timestep sim + interpolated render ----------
-  var acc = 0, tPrev = 0, slowFrameCount = 0;
+  var acc = 0, tPrev = 0;
+  var frameProbe = [];
+  var targetFrameMs = 0;
+  var measuredFrames = 0;
+  var missedFrames = 0;
+
+  function standardFrameTime(ms) {
+    if (ms <= 7.8) return 1000 / 144;
+    if (ms <= 10.2) return 1000 / 120;
+    if (ms <= 13.4) return 1000 / 90;
+    if (ms <= 20.5) return 1000 / 60;
+    if (ms <= 27.5) return 1000 / 45;
+    return 1000 / 30;
+  }
+
+  function monitorFramePacing(frameMs) {
+    if (lowPowerMode || frameMs <= 0 || frameMs >= 100) return;
+    if (!targetFrameMs) {
+      frameProbe.push(frameMs);
+      if (frameProbe.length < 45) return;
+      frameProbe.sort(function (a, b) { return a - b; });
+      targetFrameMs = standardFrameTime(
+        frameProbe[Math.floor(frameProbe.length * 0.2)]
+      );
+      frameProbe.length = 0;
+      return;
+    }
+
+    // Refresh rates can change while the app is open (ProMotion, battery
+    // saver, Android adaptive refresh). Adopt a newly observed faster cadence.
+    if (frameMs < targetFrameMs * 0.78) {
+      targetFrameMs = standardFrameTime(frameMs);
+      measuredFrames = 0;
+      missedFrames = 0;
+      return;
+    }
+
+    var expectedFrames = Math.max(1, Math.round(frameMs / targetFrameMs));
+    measuredFrames++;
+    missedFrames += expectedFrames - 1;
+    if (measuredFrames < 90) return;
+
+    var totalFrames = measuredFrames + missedFrames;
+    var missedRatio = totalFrames ? missedFrames / totalFrames : 0;
+    if (missedRatio > 0.12) enableLowPowerMode();
+    measuredFrames = 0;
+    missedFrames = 0;
+  }
+
   function loop(t) {
     requestAnimationFrame(loop);
     if (!tPrev) { tPrev = t; return; }
 
     var rawFrame = (t - tPrev) / 1000;
     tPrev = t;
-
-    // A capable device that sustains less than ~26 FPS automatically falls
-    // back to the low-power resolution/effects budget after a short sample.
-    if (!lowPowerMode) {
-      if (rawFrame > 1 / 26 && rawFrame < 0.25) slowFrameCount++;
-      else slowFrameCount = Math.max(0, slowFrameCount - 2);
-      if (slowFrameCount >= 20) enableLowPowerMode();
-    }
+    monitorFramePacing(rawFrame * 1000);
 
     // Never fast-forward through a long OS/browser stall. Ordinary low frame
     // rates still receive enough catch-up steps to keep real-time pacing.

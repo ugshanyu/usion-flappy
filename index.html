@@ -32,6 +32,7 @@
 <meta name="twitter:description" content="Tap to flap, thread the pipes, and chase the top score.">
 <meta name="twitter:image" content="https://usion-flappy.vercel.app/icons/flappy-icon-1024.png">
 <script src="https://usions.com/usion-sdk.js"></script>
+<script src="/vendor/pixi/8.19.0/pixi.min.js"></script>
 <style>
   :root {
     --bg: #ffffff; --fg: #000000; --muted: #666666; --line: #e5e5e5;
@@ -44,14 +45,18 @@
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
   body {
-    background: var(--bg); color: var(--fg);
+    background-color: #020721;
+    background-image: url('/game-assets/background.webp');
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", sans-serif;
     user-select: none; -webkit-user-select: none; touch-action: manipulation;
   }
-  #scene, #game {
+  #game, #game canvas {
     position: absolute; inset: 0; width: 100%; height: 100%; display: block;
   }
-  #scene { pointer-events: none; }
   .overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 16px; padding: 24px;
@@ -129,8 +134,7 @@
 </style>
 </head>
 <body>
-<canvas id="scene" aria-hidden="true"></canvas>
-<canvas id="game"></canvas>
+<div id="game" aria-hidden="true"></div>
 <div id="hud" class="hidden">0</div>
 
 <div id="start" class="overlay">
@@ -166,18 +170,20 @@
           friends: 'Friends', global: 'Global', loading: 'Loading…', again: 'Play again',
           empty: 'No friend records yet — invite friends and beat their scores!',
           emptyGlobal: 'No scores yet — be the first on the board!', you: 'You',
-          newBest: 'New record!' },
+          newBest: 'New record!', rendererError: 'This device could not start the game.' },
     mn: { title: 'Flappy', tap: 'Товшиж нис. Хоолойд бүү мөргө.', score: 'Оноо', best: 'Дээд',
           friends: 'Найзууд', global: 'Дэлхий', loading: 'Уншиж байна…', again: 'Дахин тоглох',
           empty: 'Найзын амжилт алга — найзаа урьж, амжилтыг нь давaарай!',
           emptyGlobal: 'Оноо алга — тэргүүн нь болоорой!', you: 'Та',
-          newBest: 'Шинэ дээд амжилт!' }
+          newBest: 'Шинэ дээд амжилт!',
+          rendererError: 'Энэ төхөөрөмж тоглоомыг эхлүүлж чадсангүй.' }
   };
   var L = STR.en;
 
   function applyStrings() {
     document.getElementById('t-title').textContent = L.title;
-    document.getElementById('t-tap').textContent = L.tap;
+    document.getElementById('t-tap').textContent =
+      document.documentElement.dataset.gameAssets === 'error' ? L.rendererError : L.tap;
     document.getElementById('t-score').textContent = L.score;
     document.getElementById('t-best').textContent = L.best;
     document.getElementById('tab-friends').textContent = L.friends;
@@ -186,93 +192,33 @@
     document.getElementById('new-best').textContent = L.newBest;
   }
 
-  // ---------- layered canvas ----------
-  // The opaque scene is rendered only when assets/viewport change. The
-  // transparent gameplay layer stays small and cheap at 60–144 Hz.
-  var sceneCanvas = document.getElementById('scene');
-  var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
-  var canvas = document.getElementById('game');
-  var ctx = canvas.getContext('2d', { alpha: true });
+  // ---------- PixiJS renderer ----------
+  // One WebGL canvas, one ticker, 1x resolution, and a very small scene graph.
+  var gameEl = document.getElementById('game');
   var reducedMotion = !!(window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  var lowPowerMode = reducedMotion ||
-    (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
-    (navigator.deviceMemory && navigator.deviceMemory <= 4);
-  var dprCap = lowPowerMode ? 1 : 1.5;
-  var pendingLowPowerResize = false;
-  var pipeBodyCanvas, pipeLipCanvas, birdSprites;
-  var sceneImage = new Image();
-  var birdImages = [new Image(), new Image(), new Image()];
-  var pipeCapImage = new Image();
-  var pipeBodyImage = new Image();
-  var runtimeBirdSprites = [null, null, null];
-  var runtimePipeCap = null;
-  var runtimePipeBody = null;
-  var runtimePipeCapHeight = 0;
-  var runtimePipeBodyHeight = 0;
-  var runtimeSpriteDpr = 0;
-  var loadedAssetCount = 0;
-  var totalAssetCount = 6;
-  var W = 0, H = 0, DPR = 1;
-  function imageReady(image) {
-    return image.complete && image.naturalWidth > 0;
-  }
-  function loadGameAsset(image, source, rebuildBackground) {
-    image.onload = function () {
-      loadedAssetCount++;
-      document.documentElement.dataset.gameAssets =
-        loadedAssetCount === totalAssetCount ? 'ready' : 'loading';
-      if (rebuildBackground) buildScene();
-      prepareRuntimeSprites();
-    };
-    image.onerror = function () {
-      document.documentElement.dataset.gameAssets = 'fallback';
-    };
-    image.src = source;
-  }
+  var pixiApp = null;
+  var pixiReady = false;
+  var gameLayer = null;
+  var pipeLayer = null;
+  var birdView = null;
+  var groundView = null;
+  var flashView = null;
+  var birdTextures = [];
+  var pipeCapTexture = null;
+  var pipeBodyTexture = null;
+  var pipeViewPool = [];
+  var W = window.innerWidth;
+  var H = window.innerHeight;
   document.documentElement.dataset.gameAssets = 'loading';
-  loadGameAsset(sceneImage, '/game-assets/background.webp', true);
-  loadGameAsset(birdImages[0], '/game-assets/bird-up.png', false);
-  loadGameAsset(birdImages[1], '/game-assets/bird-mid.png', false);
-  loadGameAsset(birdImages[2], '/game-assets/bird-down.png', false);
-  loadGameAsset(pipeCapImage, '/game-assets/pipe-cap.png', false);
-  loadGameAsset(pipeBodyImage, '/game-assets/pipe-body.png', false);
-  function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, dprCap);
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    buildScene();
-    prepareRuntimeSprites();
-  }
-  function enableLowPowerMode() {
-    if (lowPowerMode) return;
-    lowPowerMode = true;
-    dprCap = 1;
-    if (typeof state !== 'undefined' && state === 1) {
-      pendingLowPowerResize = true;
-      return;
-    }
-    resize();
-  }
-  function applyPendingPerformanceMode() {
-    if (!pendingLowPowerResize) return;
-    pendingLowPowerResize = false;
-    resize();
-  }
-  window.addEventListener('resize', resize);
-  resize();
 
   // ---------- theme ----------
   var dark = false;
-  var COL = { bg: '#ffffff', fg: '#000000', line: '#e5e5e5', soft: '#f2f2f2' };
   function applyTheme(t) {
     dark = t === 'dark';
     document.documentElement.classList.toggle('dark', dark);
     document.body.classList.toggle('dark', dark);
-    COL = dark
-      ? { bg: '#000000', fg: '#ffffff', line: '#2a2a2a', soft: '#141414' }
-      : { bg: '#ffffff', fg: '#000000', line: '#e5e5e5', soft: '#f2f2f2' };
+    if (flashView) flashView.tint = dark ? 0xffffff : 0x000000;
   }
 
   // ---------- tuning ----------
@@ -286,244 +232,151 @@
   var PIPE_BODY_DRAW_W = PIPE_W + 4;
   var PIPE_CAP_DRAW_W = PIPE_BODY_DRAW_W * 1.18;
 
-  function makeRuntimeSprite(image, width, height) {
-    if (!imageReady(image)) return null;
-    var sprite = document.createElement('canvas');
-    sprite.width = Math.max(1, Math.round(width * DPR));
-    sprite.height = Math.max(1, Math.round(height * DPR));
-    var spriteCtx = sprite.getContext('2d', { alpha: true });
-    spriteCtx.imageSmoothingEnabled = true;
-    spriteCtx.imageSmoothingQuality = 'high';
-    spriteCtx.drawImage(image, 0, 0, sprite.width, sprite.height);
-    return sprite;
+  function makePipeView() {
+    var container = new PIXI.Container();
+    var topBody = new PIXI.Sprite({ texture: pipeBodyTexture });
+    var topCap = new PIXI.Sprite({ texture: pipeCapTexture });
+    var bottomBody = new PIXI.Sprite({ texture: pipeBodyTexture });
+    var bottomCap = new PIXI.Sprite({ texture: pipeCapTexture });
+    topBody.anchor.set(0.5, 0);
+    topCap.anchor.set(0.5, 0);
+    bottomBody.anchor.set(0.5, 0);
+    bottomCap.anchor.set(0.5, 0);
+    topCap.rotation = Math.PI;
+    container.addChild(topBody, topCap, bottomBody, bottomCap);
+    pipeLayer.addChild(container);
+    return {
+      container: container,
+      topBody: topBody,
+      topCap: topCap,
+      bottomBody: bottomBody,
+      bottomCap: bottomCap
+    };
   }
 
-  function prepareRuntimeSprites() {
-    if (!BIRD_DRAW_W || !DPR) return;
-    if (runtimeSpriteDpr !== DPR) {
-      runtimeSpriteDpr = DPR;
-      runtimeBirdSprites = [null, null, null];
-      runtimePipeCap = null;
-      runtimePipeBody = null;
-      runtimePipeBodyHeight = 0;
+  function acquirePipeView() {
+    var view = pipeViewPool.pop() || makePipeView();
+    view.container.visible = true;
+    return view;
+  }
+
+  function releasePipeView(view) {
+    if (!view) return;
+    view.container.visible = false;
+    pipeViewPool.push(view);
+  }
+
+  function layoutPipeView(pipe) {
+    if (!pipe || !pipe.view || !pipeCapTexture) return;
+    var view = pipe.view;
+    var top = pipe.cy - pipe.gap / 2;
+    var bottom = pipe.cy + pipe.gap / 2;
+    var capW = PIPE_CAP_DRAW_W;
+    var capH = capW * pipeCapTexture.height / pipeCapTexture.width;
+    var topBodyH = Math.max(1, top - capH * 0.56 + 10);
+    var bottomBodyY = bottom + capH * 0.56;
+
+    view.topBody.position.set(0, -10);
+    view.topBody.width = PIPE_BODY_DRAW_W;
+    view.topBody.height = topBodyH;
+    view.topCap.position.set(0, top);
+    view.topCap.width = capW;
+    view.topCap.height = capH;
+    view.bottomCap.position.set(0, bottom);
+    view.bottomCap.width = capW;
+    view.bottomCap.height = capH;
+    view.bottomBody.position.set(0, bottomBodyY);
+    view.bottomBody.width = PIPE_BODY_DRAW_W;
+    view.bottomBody.height = Math.max(1, H - bottomBodyY + 10);
+  }
+
+  function resizeRenderer() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    if (!pixiApp || !pixiApp.renderer) return;
+    pixiApp.renderer.resize(W, H);
+    if (!groundView || !flashView) return;
+    groundView.width = W + 20;
+    groundView.y = H - 3;
+    flashView.width = W;
+    flashView.height = H;
+    if (typeof pipes !== 'undefined' && pipes) {
+      for (var i = 0; i < pipes.length; i++) layoutPipeView(pipes[i]);
     }
-    for (var i = 0; i < birdImages.length; i++) {
-      if (!runtimeBirdSprites[i] && imageReady(birdImages[i])) {
-        runtimeBirdSprites[i] = makeRuntimeSprite(
-          birdImages[i], BIRD_DRAW_W, BIRD_DRAW_H
-        );
+  }
+  window.addEventListener('resize', resizeRenderer);
+
+  function rendererFailed() {
+    document.documentElement.dataset.gameAssets = 'error';
+    applyStrings();
+  }
+
+  function initRenderer() {
+    if (!window.PIXI) {
+      rendererFailed();
+      return;
+    }
+    pixiApp = new PIXI.Application();
+    pixiApp.init({
+      width: W,
+      height: H,
+      resolution: 1,
+      autoDensity: false,
+      antialias: false,
+      backgroundAlpha: 0,
+      preference: 'webgl',
+      autoStart: false,
+      sharedTicker: false,
+      webgl: {
+        preferWebGLVersion: 2,
+        powerPreference: 'low-power',
+        preserveDrawingBuffer: false
       }
-    }
-    if (!runtimePipeCap && imageReady(pipeCapImage)) {
-      runtimePipeCapHeight =
-        PIPE_CAP_DRAW_W * pipeCapImage.naturalHeight / pipeCapImage.naturalWidth;
-      runtimePipeCap = makeRuntimeSprite(
-        pipeCapImage, PIPE_CAP_DRAW_W, runtimePipeCapHeight
-      );
-    }
-    var requiredBodyHeight = H + 20;
-    if (runtimePipeBodyHeight !== requiredBodyHeight) {
-      runtimePipeBody = null;
-      runtimePipeBodyHeight = requiredBodyHeight;
-    }
-    if (!runtimePipeBody && imageReady(pipeBodyImage)) {
-      runtimePipeBody = makeRuntimeSprite(
-        pipeBodyImage, PIPE_BODY_DRAW_W, runtimePipeBodyHeight
-      );
-    }
-  }
+    }).then(function () {
+      gameEl.appendChild(pixiApp.canvas);
+      return Promise.all([
+        PIXI.Assets.load('/game-assets/bird-up.png'),
+        PIXI.Assets.load('/game-assets/bird-mid.png'),
+        PIXI.Assets.load('/game-assets/bird-down.png'),
+        PIXI.Assets.load('/game-assets/pipe-cap.png'),
+        PIXI.Assets.load('/game-assets/pipe-body.png')
+      ]);
+    }).then(function (textures) {
+      birdTextures = textures.slice(0, 3);
+      pipeCapTexture = textures[3];
+      pipeBodyTexture = textures[4];
 
-  function drawPipeBody(x, y, width, height) {
-    var sourceHeight = Math.min(
-      runtimePipeBody.height,
-      Math.max(1, Math.round(height * DPR))
-    );
-    ctx.drawImage(
-      runtimePipeBody,
-      0,
-      0,
-      runtimePipeBody.width,
-      sourceHeight,
-      x,
-      y,
-      width,
-      height
-    );
-  }
+      gameLayer = new PIXI.Container();
+      pipeLayer = new PIXI.Container();
+      groundView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
+      groundView.tint = 0x56e2ff;
+      groundView.alpha = 0.74;
+      groundView.height = 2;
+      groundView.x = -10;
+      birdView = new PIXI.Sprite({ texture: birdTextures[1] });
+      birdView.anchor.set(0.5);
+      birdView.width = BIRD_DRAW_W;
+      birdView.height = BIRD_DRAW_H;
+      flashView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
+      flashView.position.set(0, 0);
+      flashView.alpha = 0;
+      flashView.tint = dark ? 0xffffff : 0x000000;
 
-  // ---------- cached icon-style artwork ----------
-  // The background and sprites are rendered once, then reused with drawImage.
-  // This keeps the glossy icon look without rebuilding gradients every frame.
-  function buildScene() {
-    var sw = Math.max(1, Math.round(W * DPR));
-    var sh = Math.max(1, Math.round(H * DPR));
-    sceneCanvas.width = sw; sceneCanvas.height = sh;
-
-    var sky = sceneCtx.createLinearGradient(0, 0, 0, sh);
-    sky.addColorStop(0, '#020721');
-    sky.addColorStop(0.5, '#061858');
-    sky.addColorStop(1, '#087be8');
-    sceneCtx.fillStyle = sky;
-    sceneCtx.fillRect(0, 0, sw, sh);
-
-    var glowRadius = Math.max(sw, sh) * 0.65;
-    var glow = sceneCtx.createRadialGradient(sw * 0.5, sh * 0.9, 0,
-                                             sw * 0.5, sh * 0.9, glowRadius);
-    glow.addColorStop(0, 'rgba(120, 235, 255, 0.92)');
-    glow.addColorStop(0.12, 'rgba(20, 151, 255, 0.5)');
-    glow.addColorStop(0.55, 'rgba(4, 35, 126, 0.18)');
-    glow.addColorStop(1, 'rgba(2, 7, 33, 0)');
-    sceneCtx.fillStyle = glow;
-    sceneCtx.fillRect(0, 0, sw, sh);
-
-    var starCount = lowPowerMode ? 18 : 34;
-    for (var i = 0; i < starCount; i++) {
-      var sx = (((i * 73 + 19) % 101) / 101) * sw;
-      var sy = (((i * 47 + 11) % 89) / 89) * sh * 0.72;
-      var sr = i % 7 === 0 ? 1.7 : 0.8;
-      sceneCtx.fillStyle = i % 5 === 0
-        ? 'rgba(255, 190, 55, 0.9)' : 'rgba(90, 215, 255, 0.78)';
-      sceneCtx.beginPath();
-      sceneCtx.arc(sx, sy, sr, 0, Math.PI * 2);
-      sceneCtx.fill();
-    }
-
-    function cloud(x, y, scale, alpha) {
-      sceneCtx.fillStyle = 'rgba(45, 117, 238, ' + alpha + ')';
-      sceneCtx.beginPath();
-      sceneCtx.arc(x, y, 28 * scale, Math.PI, Math.PI * 2);
-      sceneCtx.arc(x + 28 * scale, y - 12 * scale, 36 * scale, Math.PI, Math.PI * 2);
-      sceneCtx.arc(x + 66 * scale, y, 30 * scale, Math.PI, Math.PI * 2);
-      sceneCtx.lineTo(x + 96 * scale, y + 22 * scale);
-      sceneCtx.lineTo(x, y + 22 * scale);
-      sceneCtx.closePath();
-      sceneCtx.fill();
-    }
-    cloud(-20, sh * 0.87, Math.max(0.75, sw / 950), 0.68);
-    cloud(sw * 0.7, sh * 0.9, Math.max(0.9, sw / 850), 0.62);
-
-    var horizon = sceneCtx.createLinearGradient(0, sh * 0.88, 0, sh);
-    horizon.addColorStop(0, 'rgba(105, 235, 255, 0)');
-    horizon.addColorStop(0.5, 'rgba(28, 129, 247, 0.36)');
-    horizon.addColorStop(1, 'rgba(1, 8, 43, 0.82)');
-    sceneCtx.fillStyle = horizon;
-    sceneCtx.fillRect(0, sh * 0.82, sw, sh * 0.18);
-
-    if (imageReady(sceneImage)) {
-      var sourceRatio = sceneImage.naturalWidth / sceneImage.naturalHeight;
-      var targetRatio = sw / sh;
-      var sourceX = 0, sourceY = 0;
-      var sourceW = sceneImage.naturalWidth, sourceH = sceneImage.naturalHeight;
-      if (targetRatio > sourceRatio) {
-        sourceH = sourceW / targetRatio;
-        sourceY = (sceneImage.naturalHeight - sourceH) / 2;
-      } else {
-        sourceW = sourceH * targetRatio;
-        sourceX = (sceneImage.naturalWidth - sourceW) / 2;
+      gameLayer.addChild(pipeLayer, groundView, birdView);
+      pixiApp.stage.addChild(gameLayer, flashView);
+      resizeRenderer();
+      reset();
+      pixiReady = true;
+      document.documentElement.dataset.gameAssets = 'ready';
+      pixiApp.ticker.add(loop, undefined, PIXI.UPDATE_PRIORITY.HIGH);
+      if (pixiApp.renderer.prepare && pixiApp.renderer.prepare.upload) {
+        return pixiApp.renderer.prepare.upload(pixiApp.stage);
       }
-      sceneCtx.drawImage(
-        sceneImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sw, sh
-      );
-    }
-  }
-
-  function buildGameSprites() {
-    pipeBodyCanvas = document.createElement('canvas');
-    pipeBodyCanvas.width = PIPE_W + 8; pipeBodyCanvas.height = 64;
-    var pb = pipeBodyCanvas.getContext('2d');
-    var pipeGradient = pb.createLinearGradient(0, 0, pipeBodyCanvas.width, 0);
-    pipeGradient.addColorStop(0, '#032f1d');
-    pipeGradient.addColorStop(0.13, '#067d27');
-    pipeGradient.addColorStop(0.42, '#18c43c');
-    pipeGradient.addColorStop(0.58, '#d5f94c');
-    pipeGradient.addColorStop(0.69, '#25b936');
-    pipeGradient.addColorStop(1, '#01351e');
-    pb.fillStyle = pipeGradient;
-    pb.fillRect(3, 0, PIPE_W + 2, 64);
-    pb.strokeStyle = 'rgba(48, 235, 255, 0.72)';
-    pb.lineWidth = 2;
-    pb.strokeRect(3, -1, PIPE_W + 2, 66);
-
-    pipeLipCanvas = document.createElement('canvas');
-    pipeLipCanvas.width = PIPE_W + 20; pipeLipCanvas.height = LIP + 8;
-    var pl = pipeLipCanvas.getContext('2d');
-    var lipGradient = pl.createLinearGradient(0, 0, pipeLipCanvas.width, 0);
-    lipGradient.addColorStop(0, '#032b1c');
-    lipGradient.addColorStop(0.16, '#07852a');
-    lipGradient.addColorStop(0.48, '#2ed147');
-    lipGradient.addColorStop(0.62, '#e4ff61');
-    lipGradient.addColorStop(0.75, '#1aad39');
-    lipGradient.addColorStop(1, '#022d1b');
-    pl.fillStyle = lipGradient;
-    pl.fillRect(2, 2, pipeLipCanvas.width - 4, pipeLipCanvas.height - 4);
-    pl.strokeStyle = '#43f1ff';
-    pl.lineWidth = 2;
-    pl.strokeRect(2, 2, pipeLipCanvas.width - 4, pipeLipCanvas.height - 4);
-    pl.strokeStyle = 'rgba(255, 255, 160, 0.55)';
-    pl.beginPath();
-    pl.moveTo(6, 5); pl.lineTo(pipeLipCanvas.width - 6, 5); pl.stroke();
-
-    birdSprites = [];
-    for (var frame = 0; frame < 3; frame++) {
-      var sprite = document.createElement('canvas');
-      sprite.width = 120; sprite.height = 88;
-      var b = sprite.getContext('2d');
-      b.shadowColor = 'rgba(45, 208, 255, 0.75)';
-      b.shadowBlur = 9;
-
-      b.fillStyle = '#ef8a13';
-      b.save(); b.translate(30, 48); b.rotate(-0.42);
-      b.beginPath(); b.ellipse(0, -7, 17, 6, 0, 0, Math.PI * 2); b.fill();
-      b.beginPath(); b.ellipse(-2, 4, 16, 6, 0, 0, Math.PI * 2); b.fill();
-      b.restore();
-
-      var bodyGradient = b.createRadialGradient(58, 30, 4, 54, 43, 30);
-      bodyGradient.addColorStop(0, '#fff477');
-      bodyGradient.addColorStop(0.34, '#ffd528');
-      bodyGradient.addColorStop(0.72, '#f3a20d');
-      bodyGradient.addColorStop(1, '#bb5c07');
-      b.fillStyle = bodyGradient;
-      b.beginPath(); b.ellipse(56, 44, 29, 25, 0, 0, Math.PI * 2); b.fill();
-
-      b.shadowBlur = 0;
-      b.fillStyle = '#ffbf19';
-      b.beginPath(); b.ellipse(45, 19, 12, 5, -0.75, 0, Math.PI * 2); b.fill();
-      b.beginPath(); b.ellipse(57, 17, 12, 5, -0.48, 0, Math.PI * 2); b.fill();
-
-      var wingY = frame === 0 ? 33 : (frame === 1 ? 45 : 55);
-      var wingAngle = frame === 0 ? -0.72 : (frame === 1 ? -0.2 : 0.35);
-      var wingGradient = b.createLinearGradient(31, wingY - 12, 58, wingY + 12);
-      wingGradient.addColorStop(0, '#fff06a');
-      wingGradient.addColorStop(0.55, '#f7b416');
-      wingGradient.addColorStop(1, '#d57209');
-      b.save(); b.translate(38, wingY); b.rotate(wingAngle);
-      b.fillStyle = wingGradient;
-      b.beginPath(); b.ellipse(0, 0, 19, 9, 0, 0, Math.PI * 2); b.fill();
-      b.strokeStyle = 'rgba(138, 69, 3, 0.5)'; b.lineWidth = 1.5; b.stroke();
-      b.restore();
-
-      b.fillStyle = '#ffffff';
-      b.beginPath(); b.arc(72, 36, 12, 0, Math.PI * 2); b.fill();
-      b.fillStyle = '#0a76d9';
-      b.beginPath(); b.arc(76, 37, 7, 0, Math.PI * 2); b.fill();
-      b.fillStyle = '#06101e';
-      b.beginPath(); b.arc(78, 38, 4.3, 0, Math.PI * 2); b.fill();
-      b.fillStyle = '#ffffff';
-      b.beginPath(); b.arc(79, 35, 1.8, 0, Math.PI * 2); b.fill();
-
-      var beakGradient = b.createLinearGradient(82, 42, 108, 48);
-      beakGradient.addColorStop(0, '#ffbb1c');
-      beakGradient.addColorStop(0.5, '#ff6d0b');
-      beakGradient.addColorStop(1, '#bc3205');
-      b.fillStyle = beakGradient;
-      b.beginPath();
-      b.moveTo(82, 42); b.lineTo(108, 48); b.lineTo(83, 54); b.closePath(); b.fill();
-      b.strokeStyle = '#8d2d08'; b.lineWidth = 1.5; b.stroke();
-
-      b.strokeStyle = '#5e3405'; b.lineWidth = 3; b.lineCap = 'round';
-      b.beginPath(); b.moveTo(64, 25); b.quadraticCurveTo(72, 20, 80, 24); b.stroke();
-      birdSprites.push(sprite);
-    }
+    }).then(function () {
+      pixiApp.start();
+    }).catch(function () {
+      rendererFailed();
+    });
   }
 
   function speedFor(sc) { return Math.min(MAX_SPEED, BASE_SPEED + sc * 1.6); }
@@ -541,6 +394,9 @@
   var distSinceSpawn, shake, flash;
 
   function reset() {
+    if (pipes) {
+      for (var i = 0; i < pipes.length; i++) releasePipeView(pipes[i].view);
+    }
     bird = { y: H * 0.45, py: H * 0.45, vy: 0, wing: 0, r: 14 };
     pipes = []; score = 0; submitted = false;
     distSinceSpawn = PIPE_SPACING * 0.55;    // first pipe arrives quickly but fairly
@@ -569,10 +425,20 @@
     var cy = lo + Math.random() * Math.max(1, hi - lo);
     cy = Math.max(prev - maxJump, Math.min(prev + maxJump, cy));
     cy = Math.max(lo, Math.min(hi, cy));
-    pipes.push({ x: W + 60, px: W + 60, cy: cy, gap: gap, passed: false });
+    var pipe = {
+      x: W + 60,
+      px: W + 60,
+      cy: cy,
+      gap: gap,
+      passed: false,
+      view: acquirePipeView()
+    };
+    layoutPipeView(pipe);
+    pipes.push(pipe);
   }
 
   function flap() {
+    if (!pixiReady) return;
     if (state === S.READY) {
       state = S.PLAY;
       document.getElementById('start').classList.add('hidden');
@@ -591,7 +457,6 @@
 
   function die() {
     state = S.DEAD; deadAt = performance.now();
-    applyPendingPerformanceMode();
     shake = reducedMotion ? 0 : 1;
     flash = reducedMotion ? 0 : 1;
     if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
@@ -635,7 +500,10 @@
       if (!p.passed && p.x + PIPE_W / 2 < bx - bird.r) {
         p.passed = true; score++; setHud(score);
       }
-      if (p.x < -PIPE_W - LIP) pipes.splice(j, 1);
+      if (p.x < -PIPE_W - LIP) {
+        releasePipeView(p.view);
+        pipes.splice(j, 1);
+      }
       if (Math.abs(p.x - bx) < PIPE_W / 2 + bird.r) {
         var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
         if (bird.y - bird.r < top || bird.y + bird.r > bot) { die(); return; }
@@ -644,153 +512,37 @@
     if (bird.y + bird.r > H - 4 || bird.y - bird.r < -40) { die(); return; }
   }
 
-  // ---------- render (interpolated between sim steps) ----------
-  function render(alpha) {
-    ctx.clearRect(0, 0, W, H);
-
+  // ---------- Pixi scene update (rendering itself is engine-managed) ----------
+  function updateView(alpha) {
+    if (!pixiReady) return;
     var sx = 0, sy = 0;
     if (shake > 0) {
       var m = shake * 7;
       sx = (Math.random() * 2 - 1) * m; sy = (Math.random() * 2 - 1) * m;
     }
-    ctx.save();
-    ctx.translate(sx, sy);
+    gameLayer.position.set(sx, sy);
 
-    // luminous horizon/ground line
-    ctx.strokeStyle = 'rgba(86, 226, 255, 0.74)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(-10, H - 3); ctx.lineTo(W + 10, H - 3); ctx.stroke();
-
-    // Generated glossy pipe assets; cached Canvas artwork remains offline fallback.
     for (var j = 0; j < pipes.length; j++) {
       var p = pipes[j];
-      var x = p.px + (p.x - p.px) * alpha;
-      var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
-      if (runtimePipeBody && runtimePipeCap) {
-        var generatedBodyW = PIPE_BODY_DRAW_W;
-        var capW = PIPE_CAP_DRAW_W;
-        var capH = runtimePipeCapHeight;
-        var topBodyH = Math.max(1, top - capH * 0.56 + 10);
-        var bottomBodyY = bot + capH * 0.56;
-        drawPipeBody(x - generatedBodyW / 2, -10, generatedBodyW, topBodyH);
-        ctx.save();
-        ctx.translate(x, top);
-        ctx.rotate(Math.PI);
-        ctx.drawImage(runtimePipeCap, -capW / 2, 0, capW, capH);
-        ctx.restore();
-        drawPipeBody(
-          x - generatedBodyW / 2,
-          bottomBodyY,
-          generatedBodyW,
-          Math.max(1, H - bottomBodyY + 10)
-        );
-        ctx.drawImage(runtimePipeCap, x - capW / 2, bot, capW, capH);
-      } else {
-        var bodyW = pipeBodyCanvas.width;
-        var lipW = pipeLipCanvas.width;
-        var fallbackTopBodyH = Math.max(1, top - LIP + 10);
-        var fallbackBottomBodyH = Math.max(1, H - bot - LIP - 3);
-        ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, -10, bodyW, fallbackTopBodyH);
-        ctx.drawImage(pipeLipCanvas, x - lipW / 2, top - LIP - 4);
-        ctx.drawImage(pipeLipCanvas, x - lipW / 2, bot - 4);
-        ctx.drawImage(
-          pipeBodyCanvas,
-          x - bodyW / 2,
-          bot + LIP,
-          bodyW,
-          fallbackBottomBodyH
-        );
-      }
+      p.view.container.x = p.px + (p.x - p.px) * alpha;
     }
 
-    // Generated golden bird — three normalized wing poses from the icon reference.
     var bx = birdX();
     var by = bird.py + (bird.y - bird.py) * alpha;
-    ctx.save();
-    ctx.translate(bx, by);
     var tilt = Math.max(-0.5, Math.min(0.9, (bird.vy || 0) / 900));
-    ctx.rotate(state === S.READY ? 0 : tilt);
     var wingWave = Math.sin(bird.wing);
     var spriteIndex = wingWave > 0.35 ? 0 : (wingWave < -0.35 ? 2 : 1);
-    if (runtimeBirdSprites[spriteIndex]) {
-      ctx.drawImage(
-        runtimeBirdSprites[spriteIndex],
-        -BIRD_DRAW_W / 2,
-        -BIRD_DRAW_H / 2,
-        BIRD_DRAW_W,
-        BIRD_DRAW_H
-      );
-    } else {
-      ctx.drawImage(birdSprites[spriteIndex], -34, -27, 68, 50);
-    }
-    ctx.restore();
-
-    ctx.restore();
-
-    if (flash > 0) {
-      ctx.globalAlpha = flash * 0.35;
-      ctx.fillStyle = COL.fg;
-      ctx.fillRect(0, 0, W, H);
-      ctx.globalAlpha = 1;
-    }
+    birdView.position.set(bx, by);
+    birdView.rotation = state === S.READY ? 0 : tilt;
+    birdView.texture = birdTextures[spriteIndex];
+    flashView.alpha = flash * 0.35;
   }
 
   // ---------- main loop: fixed-timestep sim + interpolated render ----------
-  var acc = 0, tPrev = 0;
-  var frameProbe = [];
-  var targetFrameMs = 0;
-  var measuredFrames = 0;
-  var missedFrames = 0;
+  var acc = 0;
 
-  function standardFrameTime(ms) {
-    if (ms <= 7.8) return 1000 / 144;
-    if (ms <= 10.2) return 1000 / 120;
-    if (ms <= 13.4) return 1000 / 90;
-    if (ms <= 20.5) return 1000 / 60;
-    if (ms <= 27.5) return 1000 / 45;
-    return 1000 / 30;
-  }
-
-  function monitorFramePacing(frameMs) {
-    if (lowPowerMode || frameMs <= 0 || frameMs >= 100) return;
-    if (!targetFrameMs) {
-      frameProbe.push(frameMs);
-      if (frameProbe.length < 45) return;
-      frameProbe.sort(function (a, b) { return a - b; });
-      targetFrameMs = standardFrameTime(
-        frameProbe[Math.floor(frameProbe.length * 0.2)]
-      );
-      frameProbe.length = 0;
-      return;
-    }
-
-    // Refresh rates can change while the app is open (ProMotion, battery
-    // saver, Android adaptive refresh). Adopt a newly observed faster cadence.
-    if (frameMs < targetFrameMs * 0.78) {
-      targetFrameMs = standardFrameTime(frameMs);
-      measuredFrames = 0;
-      missedFrames = 0;
-      return;
-    }
-
-    var expectedFrames = Math.max(1, Math.round(frameMs / targetFrameMs));
-    measuredFrames++;
-    missedFrames += expectedFrames - 1;
-    if (measuredFrames < 90) return;
-
-    var totalFrames = measuredFrames + missedFrames;
-    var missedRatio = totalFrames ? missedFrames / totalFrames : 0;
-    if (missedRatio > 0.12) enableLowPowerMode();
-    measuredFrames = 0;
-    missedFrames = 0;
-  }
-
-  function loop(t) {
-    requestAnimationFrame(loop);
-    if (!tPrev) { tPrev = t; return; }
-
-    var rawFrame = (t - tPrev) / 1000;
-    tPrev = t;
-    monitorFramePacing(rawFrame * 1000);
+  function loop(ticker) {
+    var rawFrame = ticker.elapsedMS / 1000;
 
     // Never fast-forward through a long OS/browser stall. Ordinary low frame
     // rates still receive enough catch-up steps to keep real-time pacing.
@@ -801,10 +553,10 @@
       step(FIXED_DT); acc -= FIXED_DT; steps++;
     }
     if (steps === MAX_CATCH_UP_STEPS && acc >= FIXED_DT) acc = 0;
-    render(Math.min(1, acc / FIXED_DT));
+    updateView(Math.min(1, acc / FIXED_DT));
   }
   document.addEventListener('visibilitychange', function () {
-    tPrev = 0; acc = 0;
+    acc = 0;
   });
 
   // ---------- input ----------
@@ -903,9 +655,7 @@
   }
 
   // ---------- boot ----------
-  buildGameSprites();
-  reset();
-  requestAnimationFrame(loop);
+  initRenderer();
 
   function boot(config) {
     sdkReady = true;

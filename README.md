@@ -19,12 +19,13 @@ a reusable pipe cap/body, and an optimized background. All were generated with
 the service icon as the visual reference, then chroma-keyed and prepared as
 production PNG/WebP assets.
 
-Performance is adaptive: deterministic physics runs at 60 Hz while rendering is
-interpolated on every 60/90/120/144 Hz display refresh. The static background
-lives on its own opaque Canvas layer, while the pipe texture and bird sprites
-use reusable backing-resolution caches. This keeps per-frame work small without
-allocating new textures when obstacles spawn.
-Refresh-aware frame sampling detects missed frames relative to the device's
-actual cadence. Low-core, low-memory, reduced-motion, or persistently slow
-devices switch to 1x canvas resolution between runs. Long browser stalls are
-discarded instead of fast-forwarding into a collision.
+The renderer deliberately stays simple on every device: one PixiJS WebGL canvas
+at 1x resolution over the generated CSS background. PixiJS 8.19.0 is pinned
+locally in `vendor/pixi/8.19.0`, so gameplay does not depend on a third-party
+CDN. The scene uses one ticker, one bird sprite, pooled pipe containers, and no
+physics plugin.
+
+Deterministic physics runs at 60 Hz and rendering interpolates on every display
+refresh, so movement has the same speed on 60/90/120/144 Hz screens. There is no
+device detection or renderer switching. Long browser stalls are discarded
+instead of fast-forwarding into a collision.

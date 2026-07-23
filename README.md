@@ -7,3 +7,8 @@ and the panel shows your accepted friends' records (Usion.leaderboard.friends).
 Static single file (index.html), SDK loaded from https://usions.com/usion-sdk.js.
 Deployed on Vercel; registered in the Usion service registry with leaderboard enabled
 (backend/scripts/seed_flappy_bird.py in the main monorepo).
+
+Game artwork lives in `icons/`. The 1024px source is used for service and social
+previews; optimized 32px, 180px, 192px, and 512px variants cover browser, Apple
+touch, and installable web-app surfaces through `index.html` and
+`manifest.webmanifest`.

@@ -12,3 +12,12 @@ Game artwork lives in `icons/`. The 1024px source is used for service and social
 previews; optimized 32px, 180px, 192px, and 512px variants cover browser, Apple
 touch, and installable web-app surfaces through `index.html` and
 `manifest.webmanifest`.
+
+The in-game artwork mirrors the service icon: a golden three-pose bird, glossy
+green pipe walls, cyan highlights, and a starry deep-blue horizon scene. The
+scene and sprites are rendered into small cached canvases once and reused.
+
+Performance is adaptive: physics runs at a fixed 60 Hz, while low-core,
+low-memory, reduced-motion, or persistently slow devices switch to a 30 FPS
+render budget and 1x canvas resolution. Long browser stalls are discarded
+instead of fast-forwarding the player into a collision.

@@ -54,6 +54,12 @@
   .overlay.hidden { display: none; }
   h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
   .hint { font-size: 15px; color: var(--muted); text-align: center; }
+  #start {
+    color: #ffffff;
+    background: linear-gradient(180deg, rgba(1, 7, 31, 0.06), rgba(2, 16, 67, 0.2));
+    text-shadow: 0 2px 10px rgba(0, 18, 70, 0.72);
+  }
+  #start .hint { color: rgba(255, 255, 255, 0.82); }
   .panel {
     width: min(340px, 92vw); background: var(--panel); border: 1px solid var(--line);
     border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px;
@@ -103,12 +109,16 @@
   .empty { font-size: 13px; color: var(--muted); text-align: center; padding: 10px 0; }
   #hud {
     position: absolute; top: max(18px, env(safe-area-inset-top)); left: 0; right: 0;
-    text-align: center; font-size: 44px; font-weight: 700; pointer-events: none;
-    font-variant-numeric: tabular-nums; text-shadow: 0 1px 0 var(--bg);
+    color: #ffffff; text-align: center; font-size: 44px; font-weight: 700;
+    pointer-events: none; font-variant-numeric: tabular-nums;
+    text-shadow: 0 2px 8px rgba(0, 12, 55, 0.88), 0 1px 0 #001343;
     transition: transform 120ms ease; will-change: transform;
   }
   #hud.pop { transform: scale(1.18); }
   #hud.hidden { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .overlay, .panel, #hud { animation: none; transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -172,12 +182,28 @@
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d', { alpha: false, desynchronized: true }) ||
             canvas.getContext('2d');
+  var reducedMotion = !!(window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var lowPowerMode = reducedMotion ||
+    (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
+    (navigator.deviceMemory && navigator.deviceMemory <= 4);
+  var dprCap = lowPowerMode ? 1 : 1.5;
+  var sceneCanvas = document.createElement('canvas');
+  var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
+  var pipeBodyCanvas, pipeLipCanvas, birdSprites;
   var W = 0, H = 0, DPR = 1;
   function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    DPR = Math.min(window.devicePixelRatio || 1, dprCap);
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildScene();
+  }
+  function enableLowPowerMode() {
+    if (lowPowerMode) return;
+    lowPowerMode = true;
+    dprCap = 1;
+    resize();
   }
   window.addEventListener('resize', resize);
   resize();
@@ -199,7 +225,166 @@
   var BASE_SPEED = 160, MAX_SPEED = 235;     // px/s, ramps with score
   var PIPE_W = 68, LIP = 14;
   var PIPE_SPACING = 250;                    // px between pipe centers (distance-based)
-  var FIXED_DT = 1 / 120;                    // simulation step — device-independent
+  var FIXED_DT = 1 / 60;                     // stable physics without 120 Hz CPU cost
+  var MAX_CATCH_UP_STEPS = 6;                // remains fair down to roughly 10 FPS
+
+  // ---------- cached icon-style artwork ----------
+  // The background and sprites are rendered once, then reused with drawImage.
+  // This keeps the glossy icon look without rebuilding gradients every frame.
+  function buildScene() {
+    var sw = Math.max(1, Math.round(W));
+    var sh = Math.max(1, Math.round(H));
+    sceneCanvas.width = sw; sceneCanvas.height = sh;
+
+    var sky = sceneCtx.createLinearGradient(0, 0, 0, sh);
+    sky.addColorStop(0, '#020721');
+    sky.addColorStop(0.5, '#061858');
+    sky.addColorStop(1, '#087be8');
+    sceneCtx.fillStyle = sky;
+    sceneCtx.fillRect(0, 0, sw, sh);
+
+    var glowRadius = Math.max(sw, sh) * 0.65;
+    var glow = sceneCtx.createRadialGradient(sw * 0.5, sh * 0.9, 0,
+                                             sw * 0.5, sh * 0.9, glowRadius);
+    glow.addColorStop(0, 'rgba(120, 235, 255, 0.92)');
+    glow.addColorStop(0.12, 'rgba(20, 151, 255, 0.5)');
+    glow.addColorStop(0.55, 'rgba(4, 35, 126, 0.18)');
+    glow.addColorStop(1, 'rgba(2, 7, 33, 0)');
+    sceneCtx.fillStyle = glow;
+    sceneCtx.fillRect(0, 0, sw, sh);
+
+    var starCount = lowPowerMode ? 18 : 34;
+    for (var i = 0; i < starCount; i++) {
+      var sx = (((i * 73 + 19) % 101) / 101) * sw;
+      var sy = (((i * 47 + 11) % 89) / 89) * sh * 0.72;
+      var sr = i % 7 === 0 ? 1.7 : 0.8;
+      sceneCtx.fillStyle = i % 5 === 0
+        ? 'rgba(255, 190, 55, 0.9)' : 'rgba(90, 215, 255, 0.78)';
+      sceneCtx.beginPath();
+      sceneCtx.arc(sx, sy, sr, 0, Math.PI * 2);
+      sceneCtx.fill();
+    }
+
+    function cloud(x, y, scale, alpha) {
+      sceneCtx.fillStyle = 'rgba(45, 117, 238, ' + alpha + ')';
+      sceneCtx.beginPath();
+      sceneCtx.arc(x, y, 28 * scale, Math.PI, Math.PI * 2);
+      sceneCtx.arc(x + 28 * scale, y - 12 * scale, 36 * scale, Math.PI, Math.PI * 2);
+      sceneCtx.arc(x + 66 * scale, y, 30 * scale, Math.PI, Math.PI * 2);
+      sceneCtx.lineTo(x + 96 * scale, y + 22 * scale);
+      sceneCtx.lineTo(x, y + 22 * scale);
+      sceneCtx.closePath();
+      sceneCtx.fill();
+    }
+    cloud(-20, sh * 0.87, Math.max(0.75, sw / 950), 0.68);
+    cloud(sw * 0.7, sh * 0.9, Math.max(0.9, sw / 850), 0.62);
+
+    var horizon = sceneCtx.createLinearGradient(0, sh * 0.88, 0, sh);
+    horizon.addColorStop(0, 'rgba(105, 235, 255, 0)');
+    horizon.addColorStop(0.5, 'rgba(28, 129, 247, 0.36)');
+    horizon.addColorStop(1, 'rgba(1, 8, 43, 0.82)');
+    sceneCtx.fillStyle = horizon;
+    sceneCtx.fillRect(0, sh * 0.82, sw, sh * 0.18);
+  }
+
+  function buildGameSprites() {
+    pipeBodyCanvas = document.createElement('canvas');
+    pipeBodyCanvas.width = PIPE_W + 8; pipeBodyCanvas.height = 64;
+    var pb = pipeBodyCanvas.getContext('2d');
+    var pipeGradient = pb.createLinearGradient(0, 0, pipeBodyCanvas.width, 0);
+    pipeGradient.addColorStop(0, '#032f1d');
+    pipeGradient.addColorStop(0.13, '#067d27');
+    pipeGradient.addColorStop(0.42, '#18c43c');
+    pipeGradient.addColorStop(0.58, '#d5f94c');
+    pipeGradient.addColorStop(0.69, '#25b936');
+    pipeGradient.addColorStop(1, '#01351e');
+    pb.fillStyle = pipeGradient;
+    pb.fillRect(3, 0, PIPE_W + 2, 64);
+    pb.strokeStyle = 'rgba(48, 235, 255, 0.72)';
+    pb.lineWidth = 2;
+    pb.strokeRect(3, -1, PIPE_W + 2, 66);
+
+    pipeLipCanvas = document.createElement('canvas');
+    pipeLipCanvas.width = PIPE_W + 20; pipeLipCanvas.height = LIP + 8;
+    var pl = pipeLipCanvas.getContext('2d');
+    var lipGradient = pl.createLinearGradient(0, 0, pipeLipCanvas.width, 0);
+    lipGradient.addColorStop(0, '#032b1c');
+    lipGradient.addColorStop(0.16, '#07852a');
+    lipGradient.addColorStop(0.48, '#2ed147');
+    lipGradient.addColorStop(0.62, '#e4ff61');
+    lipGradient.addColorStop(0.75, '#1aad39');
+    lipGradient.addColorStop(1, '#022d1b');
+    pl.fillStyle = lipGradient;
+    pl.fillRect(2, 2, pipeLipCanvas.width - 4, pipeLipCanvas.height - 4);
+    pl.strokeStyle = '#43f1ff';
+    pl.lineWidth = 2;
+    pl.strokeRect(2, 2, pipeLipCanvas.width - 4, pipeLipCanvas.height - 4);
+    pl.strokeStyle = 'rgba(255, 255, 160, 0.55)';
+    pl.beginPath();
+    pl.moveTo(6, 5); pl.lineTo(pipeLipCanvas.width - 6, 5); pl.stroke();
+
+    birdSprites = [];
+    for (var frame = 0; frame < 3; frame++) {
+      var sprite = document.createElement('canvas');
+      sprite.width = 120; sprite.height = 88;
+      var b = sprite.getContext('2d');
+      b.shadowColor = 'rgba(45, 208, 255, 0.75)';
+      b.shadowBlur = 9;
+
+      b.fillStyle = '#ef8a13';
+      b.save(); b.translate(30, 48); b.rotate(-0.42);
+      b.beginPath(); b.ellipse(0, -7, 17, 6, 0, 0, Math.PI * 2); b.fill();
+      b.beginPath(); b.ellipse(-2, 4, 16, 6, 0, 0, Math.PI * 2); b.fill();
+      b.restore();
+
+      var bodyGradient = b.createRadialGradient(58, 30, 4, 54, 43, 30);
+      bodyGradient.addColorStop(0, '#fff477');
+      bodyGradient.addColorStop(0.34, '#ffd528');
+      bodyGradient.addColorStop(0.72, '#f3a20d');
+      bodyGradient.addColorStop(1, '#bb5c07');
+      b.fillStyle = bodyGradient;
+      b.beginPath(); b.ellipse(56, 44, 29, 25, 0, 0, Math.PI * 2); b.fill();
+
+      b.shadowBlur = 0;
+      b.fillStyle = '#ffbf19';
+      b.beginPath(); b.ellipse(45, 19, 12, 5, -0.75, 0, Math.PI * 2); b.fill();
+      b.beginPath(); b.ellipse(57, 17, 12, 5, -0.48, 0, Math.PI * 2); b.fill();
+
+      var wingY = frame === 0 ? 33 : (frame === 1 ? 45 : 55);
+      var wingAngle = frame === 0 ? -0.72 : (frame === 1 ? -0.2 : 0.35);
+      var wingGradient = b.createLinearGradient(31, wingY - 12, 58, wingY + 12);
+      wingGradient.addColorStop(0, '#fff06a');
+      wingGradient.addColorStop(0.55, '#f7b416');
+      wingGradient.addColorStop(1, '#d57209');
+      b.save(); b.translate(38, wingY); b.rotate(wingAngle);
+      b.fillStyle = wingGradient;
+      b.beginPath(); b.ellipse(0, 0, 19, 9, 0, 0, Math.PI * 2); b.fill();
+      b.strokeStyle = 'rgba(138, 69, 3, 0.5)'; b.lineWidth = 1.5; b.stroke();
+      b.restore();
+
+      b.fillStyle = '#ffffff';
+      b.beginPath(); b.arc(72, 36, 12, 0, Math.PI * 2); b.fill();
+      b.fillStyle = '#0a76d9';
+      b.beginPath(); b.arc(76, 37, 7, 0, Math.PI * 2); b.fill();
+      b.fillStyle = '#06101e';
+      b.beginPath(); b.arc(78, 38, 4.3, 0, Math.PI * 2); b.fill();
+      b.fillStyle = '#ffffff';
+      b.beginPath(); b.arc(79, 35, 1.8, 0, Math.PI * 2); b.fill();
+
+      var beakGradient = b.createLinearGradient(82, 42, 108, 48);
+      beakGradient.addColorStop(0, '#ffbb1c');
+      beakGradient.addColorStop(0.5, '#ff6d0b');
+      beakGradient.addColorStop(1, '#bc3205');
+      b.fillStyle = beakGradient;
+      b.beginPath();
+      b.moveTo(82, 42); b.lineTo(108, 48); b.lineTo(83, 54); b.closePath(); b.fill();
+      b.strokeStyle = '#8d2d08'; b.lineWidth = 1.5; b.stroke();
+
+      b.strokeStyle = '#5e3405'; b.lineWidth = 3; b.lineCap = 'round';
+      b.beginPath(); b.moveTo(64, 25); b.quadraticCurveTo(72, 20, 80, 24); b.stroke();
+      birdSprites.push(sprite);
+    }
+  }
 
   function speedFor(sc) { return Math.min(MAX_SPEED, BASE_SPEED + sc * 1.6); }
   function gapFor(sc) {
@@ -212,7 +397,7 @@
   // ---------- game state ----------
   var S = { READY: 0, PLAY: 1, DEAD: 2 };
   var state = S.READY;
-  var bird, pipes, clouds, score, best = 0, deadAt = 0, submitted = false;
+  var bird, pipes, score, best = 0, deadAt = 0, submitted = false;
   var distSinceSpawn, shake, flash;
 
   function reset() {
@@ -220,13 +405,6 @@
     pipes = []; score = 0; submitted = false;
     distSinceSpawn = PIPE_SPACING * 0.55;    // first pipe arrives quickly but fairly
     shake = 0; flash = 0;
-    if (!clouds) {
-      clouds = [];
-      for (var i = 0; i < 5; i++) {
-        clouds.push({ x: Math.random() * W, y: 40 + Math.random() * (H * 0.5),
-                      r: 14 + Math.random() * 22, v: 0.22 + Math.random() * 0.16 });
-      }
-    }
     setHud(0);
   }
 
@@ -271,7 +449,8 @@
 
   function die() {
     state = S.DEAD; deadAt = performance.now();
-    shake = 1; flash = 1;
+    shake = reducedMotion ? 0 : 1;
+    flash = reducedMotion ? 0 : 1;
     if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
     hudEl.classList.add('hidden');
     var isNewBest = score > best && score > 0;
@@ -300,12 +479,6 @@
     distSinceSpawn += v * dt;
     if (distSinceSpawn >= PIPE_SPACING) { distSinceSpawn -= PIPE_SPACING; spawnPipe(); }
 
-    for (var i = 0; i < clouds.length; i++) {
-      var c = clouds[i];
-      c.x -= v * c.v * dt;
-      if (c.x < -c.r * 3) { c.x = W + c.r * 3; c.y = 40 + Math.random() * (H * 0.5); }
-    }
-
     var bx = birdX();
     for (var j = pipes.length - 1; j >= 0; j--) {
       var p = pipes[j];
@@ -325,8 +498,7 @@
 
   // ---------- render (interpolated between sim steps) ----------
   function render(alpha) {
-    ctx.fillStyle = COL.bg;
-    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(sceneCanvas, 0, 0, W, H);
 
     var sx = 0, sy = 0;
     if (shake > 0) {
@@ -336,45 +508,35 @@
     ctx.save();
     ctx.translate(sx, sy);
 
-    // parallax clouds — barely-there depth
-    ctx.fillStyle = COL.soft;
-    for (var i = 0; i < clouds.length; i++) {
-      var c = clouds[i];
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-      ctx.arc(c.x + c.r * 0.9, c.y + c.r * 0.25, c.r * 0.72, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // ground line
-    ctx.strokeStyle = COL.line; ctx.lineWidth = 2;
+    // luminous horizon/ground line
+    ctx.strokeStyle = 'rgba(86, 226, 255, 0.74)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(-10, H - 3); ctx.lineTo(W + 10, H - 3); ctx.stroke();
 
-    // pipes
-    ctx.fillStyle = COL.fg;
+    // glossy green pipe walls
     for (var j = 0; j < pipes.length; j++) {
       var p = pipes[j];
       var x = p.px + (p.x - p.px) * alpha;
       var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
-      ctx.fillRect(x - PIPE_W / 2, -10, PIPE_W, top + 10 - LIP);
-      ctx.fillRect(x - PIPE_W / 2 - 6, top - LIP, PIPE_W + 12, LIP);
-      ctx.fillRect(x - PIPE_W / 2 - 6, bot, PIPE_W + 12, LIP);
-      ctx.fillRect(x - PIPE_W / 2, bot + LIP, PIPE_W, H - bot - LIP - 3);
+      var bodyW = pipeBodyCanvas.width;
+      var lipW = pipeLipCanvas.width;
+      var topBodyH = Math.max(1, top - LIP + 10);
+      var bottomBodyH = Math.max(1, H - bot - LIP - 3);
+      ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, -10, bodyW, topBodyH);
+      ctx.drawImage(pipeLipCanvas, x - lipW / 2, top - LIP - 4);
+      ctx.drawImage(pipeLipCanvas, x - lipW / 2, bot - 4);
+      ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, bot + LIP, bodyW, bottomBodyH);
     }
 
-    // bird
+    // golden bird — three cached wing poses selected without new drawing work
     var bx = birdX();
     var by = bird.py + (bird.y - bird.py) * alpha;
     ctx.save();
     ctx.translate(bx, by);
     var tilt = Math.max(-0.5, Math.min(0.9, (bird.vy || 0) / 900));
     ctx.rotate(state === S.READY ? 0 : tilt);
-    ctx.fillStyle = '#0070f3';
-    ctx.beginPath(); ctx.arc(0, 0, bird.r, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = COL.bg;
-    var w = Math.sin(bird.wing) * 4;
-    ctx.beginPath(); ctx.ellipse(-4, 2 + w, 7, 4.5, -0.4, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(6, -4, 2.4, 0, Math.PI * 2); ctx.fill();
+    var wingWave = Math.sin(bird.wing);
+    var spriteIndex = wingWave > 0.35 ? 0 : (wingWave < -0.35 ? 2 : 1);
+    ctx.drawImage(birdSprites[spriteIndex], -34, -27, 68, 50);
     ctx.restore();
 
     ctx.restore();
@@ -388,20 +550,41 @@
   }
 
   // ---------- main loop: fixed-timestep sim + interpolated render ----------
-  var acc = 0, tPrev = 0;
+  var acc = 0, tPrev = 0, lastRenderedAt = 0, slowFrameCount = 0;
   function loop(t) {
     requestAnimationFrame(loop);
-    if (!tPrev) { tPrev = t; return; }
-    var frame = (t - tPrev) / 1000;
+
+    // Low-power devices render at most 30 FPS. Physics still advances in fixed
+    // 60 Hz steps, so gameplay speed and collision behavior remain consistent.
+    if (lowPowerMode && lastRenderedAt && t - lastRenderedAt < 30) return;
+    if (!tPrev) { tPrev = t; lastRenderedAt = t; return; }
+
+    var rawFrame = (t - tPrev) / 1000;
     tPrev = t;
-    if (frame > 0.25) frame = FIXED_DT;      // tab was hidden — don't fast-forward
+    lastRenderedAt = t;
+
+    // A capable device that sustains less than ~26 FPS automatically falls
+    // back to the low-power resolution/effects budget after a short sample.
+    if (!lowPowerMode) {
+      if (rawFrame > 1 / 26 && rawFrame < 0.25) slowFrameCount++;
+      else slowFrameCount = Math.max(0, slowFrameCount - 2);
+      if (slowFrameCount >= 20) enableLowPowerMode();
+    }
+
+    // Never fast-forward through a long OS/browser stall. Ordinary low frame
+    // rates still receive enough catch-up steps to keep real-time pacing.
+    var frame = rawFrame > 0.25 ? FIXED_DT : Math.min(rawFrame, 0.1);
     acc += frame;
     var steps = 0;
-    while (acc >= FIXED_DT && steps < 8) { step(FIXED_DT); acc -= FIXED_DT; steps++; }
-    if (steps === 8) acc = 0;                // device too slow to catch up — drop time
-    render(acc / FIXED_DT);
+    while (acc >= FIXED_DT && steps < MAX_CATCH_UP_STEPS) {
+      step(FIXED_DT); acc -= FIXED_DT; steps++;
+    }
+    if (steps === MAX_CATCH_UP_STEPS && acc >= FIXED_DT) acc = 0;
+    render(Math.min(1, acc / FIXED_DT));
   }
-  document.addEventListener('visibilitychange', function () { tPrev = 0; });
+  document.addEventListener('visibilitychange', function () {
+    tPrev = 0; lastRenderedAt = 0; acc = 0;
+  });
 
   // ---------- input ----------
   document.addEventListener('pointerdown', function (e) {
@@ -499,6 +682,7 @@
   }
 
   // ---------- boot ----------
+  buildGameSprites();
   reset();
   requestAnimationFrame(loop);
 

@@ -19,7 +19,9 @@ a reusable pipe cap/body, and an optimized background. All were generated with
 the service icon as the visual reference, then chroma-keyed and prepared as
 production PNG/WebP assets.
 
-Performance is adaptive: physics runs at a fixed 60 Hz, while low-core,
-low-memory, reduced-motion, or persistently slow devices switch to 1x canvas
-resolution without capping animation to 30 FPS. Long browser stalls are
-discarded instead of fast-forwarding the player into a collision.
+Performance is adaptive: physics runs at a fixed 120 Hz with interpolated
+rendering on every display refresh. Generated sprites are pre-scaled once at the
+active pixel ratio, and the background is cached at backing resolution.
+Low-core, low-memory, reduced-motion, or persistently slow devices switch to 1x
+canvas resolution only between runs, avoiding a mid-game resize hitch. Long
+browser stalls are discarded instead of fast-forwarding into a collision.

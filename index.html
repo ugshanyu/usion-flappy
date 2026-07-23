@@ -192,6 +192,7 @@
     (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
     (navigator.deviceMemory && navigator.deviceMemory <= 4);
   var dprCap = lowPowerMode ? 1 : 1.5;
+  var pendingLowPowerResize = false;
   var sceneCanvas = document.createElement('canvas');
   var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
   var pipeBodyCanvas, pipeLipCanvas, birdSprites;
@@ -199,6 +200,11 @@
   var birdImages = [new Image(), new Image(), new Image()];
   var pipeCapImage = new Image();
   var pipeBodyImage = new Image();
+  var runtimeBirdSprites = [null, null, null];
+  var runtimePipeCap = null;
+  var runtimePipeBody = null;
+  var runtimePipeCapHeight = 0;
+  var runtimeSpriteDpr = 0;
   var loadedAssetCount = 0;
   var totalAssetCount = 6;
   var W = 0, H = 0, DPR = 1;
@@ -211,6 +217,7 @@
       document.documentElement.dataset.gameAssets =
         loadedAssetCount === totalAssetCount ? 'ready' : 'loading';
       if (rebuildBackground) buildScene();
+      prepareRuntimeSprites();
     };
     image.onerror = function () {
       document.documentElement.dataset.gameAssets = 'fallback';
@@ -230,11 +237,21 @@
     canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     buildScene();
+    prepareRuntimeSprites();
   }
   function enableLowPowerMode() {
     if (lowPowerMode) return;
     lowPowerMode = true;
     dprCap = 1;
+    if (typeof state !== 'undefined' && state === 1) {
+      pendingLowPowerResize = true;
+      return;
+    }
+    resize();
+  }
+  function applyPendingPerformanceMode() {
+    if (!pendingLowPowerResize) return;
+    pendingLowPowerResize = false;
     resize();
   }
   window.addEventListener('resize', resize);
@@ -257,15 +274,59 @@
   var BASE_SPEED = 160, MAX_SPEED = 235;     // px/s, ramps with score
   var PIPE_W = 68, LIP = 14;
   var PIPE_SPACING = 250;                    // px between pipe centers (distance-based)
-  var FIXED_DT = 1 / 60;                     // stable physics without 120 Hz CPU cost
-  var MAX_CATCH_UP_STEPS = 6;                // remains fair down to roughly 10 FPS
+  var FIXED_DT = 1 / 120;                    // high-frequency physics + interpolation
+  var MAX_CATCH_UP_STEPS = 12;               // keeps real-time pacing down to ~10 FPS
+  var BIRD_DRAW_W = 70, BIRD_DRAW_H = 63;
+  var PIPE_BODY_DRAW_W = PIPE_W + 4;
+  var PIPE_CAP_DRAW_W = PIPE_BODY_DRAW_W * 1.18;
+
+  function makeRuntimeSprite(image, width, height) {
+    if (!imageReady(image)) return null;
+    var sprite = document.createElement('canvas');
+    sprite.width = Math.max(1, Math.round(width * DPR));
+    sprite.height = Math.max(1, Math.round(height * DPR));
+    var spriteCtx = sprite.getContext('2d', { alpha: true });
+    spriteCtx.imageSmoothingEnabled = true;
+    spriteCtx.imageSmoothingQuality = 'high';
+    spriteCtx.drawImage(image, 0, 0, sprite.width, sprite.height);
+    return sprite;
+  }
+
+  function prepareRuntimeSprites() {
+    if (!BIRD_DRAW_W || !DPR) return;
+    if (runtimeSpriteDpr !== DPR) {
+      runtimeSpriteDpr = DPR;
+      runtimeBirdSprites = [null, null, null];
+      runtimePipeCap = null;
+      runtimePipeBody = null;
+    }
+    for (var i = 0; i < birdImages.length; i++) {
+      if (!runtimeBirdSprites[i] && imageReady(birdImages[i])) {
+        runtimeBirdSprites[i] = makeRuntimeSprite(
+          birdImages[i], BIRD_DRAW_W, BIRD_DRAW_H
+        );
+      }
+    }
+    if (!runtimePipeCap && imageReady(pipeCapImage)) {
+      runtimePipeCapHeight =
+        PIPE_CAP_DRAW_W * pipeCapImage.naturalHeight / pipeCapImage.naturalWidth;
+      runtimePipeCap = makeRuntimeSprite(
+        pipeCapImage, PIPE_CAP_DRAW_W, runtimePipeCapHeight
+      );
+    }
+    if (!runtimePipeBody && imageReady(pipeBodyImage)) {
+      runtimePipeBody = makeRuntimeSprite(
+        pipeBodyImage, PIPE_BODY_DRAW_W, 24
+      );
+    }
+  }
 
   // ---------- cached icon-style artwork ----------
   // The background and sprites are rendered once, then reused with drawImage.
   // This keeps the glossy icon look without rebuilding gradients every frame.
   function buildScene() {
-    var sw = Math.max(1, Math.round(W));
-    var sh = Math.max(1, Math.round(H));
+    var sw = Math.max(1, Math.round(W * DPR));
+    var sh = Math.max(1, Math.round(H * DPR));
     sceneCanvas.width = sw; sceneCanvas.height = sh;
 
     var sky = sceneCtx.createLinearGradient(0, 0, 0, sh);
@@ -460,10 +521,12 @@
   var hudEl = document.getElementById('hud');
   function setHud(n) {
     hudEl.textContent = String(n);
-    hudEl.classList.remove('pop');
-    void hudEl.offsetWidth;                  // restart the pop transition
-    hudEl.classList.add('pop');
-    setTimeout(function () { hudEl.classList.remove('pop'); }, 130);
+    if (!reducedMotion && typeof hudEl.animate === 'function') {
+      hudEl.animate(
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }],
+        { duration: 130, easing: 'ease-out' }
+      );
+    }
   }
 
   function spawnPipe() {
@@ -498,6 +561,7 @@
 
   function die() {
     state = S.DEAD; deadAt = performance.now();
+    applyPendingPerformanceMode();
     shake = reducedMotion ? 0 : 1;
     flash = reducedMotion ? 0 : 1;
     if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
@@ -513,7 +577,12 @@
 
   // ---------- simulation (fixed step) ----------
   function step(dt) {
-    if (state === S.READY) { bird.py = bird.y; bird.y = H * 0.45 + Math.sin(performance.now() / 350) * 8; return; }
+    if (state === S.READY) {
+      bird.py = bird.y;
+      bird.wing += dt * 3;
+      bird.y = H * 0.45 + Math.sin(bird.wing) * 8;
+      return;
+    }
     // decay effects even when dead so the crash settles smoothly
     shake = Math.max(0, shake - dt * 3.2);
     flash = Math.max(0, flash - dt * 4.5);
@@ -566,28 +635,28 @@
       var p = pipes[j];
       var x = p.px + (p.x - p.px) * alpha;
       var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
-      if (imageReady(pipeBodyImage) && imageReady(pipeCapImage)) {
-        var generatedBodyW = PIPE_W + 4;
-        var capW = generatedBodyW * 1.18;
-        var capH = capW * pipeCapImage.naturalHeight / pipeCapImage.naturalWidth;
+      if (runtimePipeBody && runtimePipeCap) {
+        var generatedBodyW = PIPE_BODY_DRAW_W;
+        var capW = PIPE_CAP_DRAW_W;
+        var capH = runtimePipeCapHeight;
         var topBodyH = Math.max(1, top - capH * 0.56 + 10);
         var bottomBodyY = bot + capH * 0.56;
         ctx.drawImage(
-          pipeBodyImage, x - generatedBodyW / 2, -10, generatedBodyW, topBodyH
+          runtimePipeBody, x - generatedBodyW / 2, -10, generatedBodyW, topBodyH
         );
         ctx.save();
         ctx.translate(x, top);
         ctx.rotate(Math.PI);
-        ctx.drawImage(pipeCapImage, -capW / 2, 0, capW, capH);
+        ctx.drawImage(runtimePipeCap, -capW / 2, 0, capW, capH);
         ctx.restore();
         ctx.drawImage(
-          pipeBodyImage,
+          runtimePipeBody,
           x - generatedBodyW / 2,
           bottomBodyY,
           generatedBodyW,
           Math.max(1, H - bottomBodyY + 10)
         );
-        ctx.drawImage(pipeCapImage, x - capW / 2, bot, capW, capH);
+        ctx.drawImage(runtimePipeCap, x - capW / 2, bot, capW, capH);
       } else {
         var bodyW = pipeBodyCanvas.width;
         var lipW = pipeLipCanvas.width;
@@ -615,8 +684,14 @@
     ctx.rotate(state === S.READY ? 0 : tilt);
     var wingWave = Math.sin(bird.wing);
     var spriteIndex = wingWave > 0.35 ? 0 : (wingWave < -0.35 ? 2 : 1);
-    if (imageReady(birdImages[spriteIndex])) {
-      ctx.drawImage(birdImages[spriteIndex], -35, -31, 70, 63);
+    if (runtimeBirdSprites[spriteIndex]) {
+      ctx.drawImage(
+        runtimeBirdSprites[spriteIndex],
+        -BIRD_DRAW_W / 2,
+        -BIRD_DRAW_H / 2,
+        BIRD_DRAW_W,
+        BIRD_DRAW_H
+      );
     } else {
       ctx.drawImage(birdSprites[spriteIndex], -34, -27, 68, 50);
     }

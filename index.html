@@ -15,6 +15,10 @@
 <link rel="icon" type="image/png" sizes="1024x1024" href="/icons/flappy-icon-1024.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/flappy-icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
+<link rel="preload" as="image" type="image/webp" href="/game-assets/background.webp">
+<link rel="preload" as="image" type="image/png" href="/game-assets/bird-mid.png">
+<link rel="preload" as="image" type="image/png" href="/game-assets/pipe-cap.png">
+<link rel="preload" as="image" type="image/png" href="/game-assets/pipe-body.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://usion-flappy.vercel.app/">
 <meta property="og:title" content="Flappy">
@@ -191,7 +195,35 @@
   var sceneCanvas = document.createElement('canvas');
   var sceneCtx = sceneCanvas.getContext('2d', { alpha: false });
   var pipeBodyCanvas, pipeLipCanvas, birdSprites;
+  var sceneImage = new Image();
+  var birdImages = [new Image(), new Image(), new Image()];
+  var pipeCapImage = new Image();
+  var pipeBodyImage = new Image();
+  var loadedAssetCount = 0;
+  var totalAssetCount = 6;
   var W = 0, H = 0, DPR = 1;
+  function imageReady(image) {
+    return image.complete && image.naturalWidth > 0;
+  }
+  function loadGameAsset(image, source, rebuildBackground) {
+    image.onload = function () {
+      loadedAssetCount++;
+      document.documentElement.dataset.gameAssets =
+        loadedAssetCount === totalAssetCount ? 'ready' : 'loading';
+      if (rebuildBackground) buildScene();
+    };
+    image.onerror = function () {
+      document.documentElement.dataset.gameAssets = 'fallback';
+    };
+    image.src = source;
+  }
+  document.documentElement.dataset.gameAssets = 'loading';
+  loadGameAsset(sceneImage, '/game-assets/background.webp', true);
+  loadGameAsset(birdImages[0], '/game-assets/bird-up.png', false);
+  loadGameAsset(birdImages[1], '/game-assets/bird-mid.png', false);
+  loadGameAsset(birdImages[2], '/game-assets/bird-down.png', false);
+  loadGameAsset(pipeCapImage, '/game-assets/pipe-cap.png', false);
+  loadGameAsset(pipeBodyImage, '/game-assets/pipe-body.png', false);
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, dprCap);
     W = window.innerWidth; H = window.innerHeight;
@@ -285,6 +317,23 @@
     horizon.addColorStop(1, 'rgba(1, 8, 43, 0.82)');
     sceneCtx.fillStyle = horizon;
     sceneCtx.fillRect(0, sh * 0.82, sw, sh * 0.18);
+
+    if (imageReady(sceneImage)) {
+      var sourceRatio = sceneImage.naturalWidth / sceneImage.naturalHeight;
+      var targetRatio = sw / sh;
+      var sourceX = 0, sourceY = 0;
+      var sourceW = sceneImage.naturalWidth, sourceH = sceneImage.naturalHeight;
+      if (targetRatio > sourceRatio) {
+        sourceH = sourceW / targetRatio;
+        sourceY = (sceneImage.naturalHeight - sourceH) / 2;
+      } else {
+        sourceW = sourceH * targetRatio;
+        sourceX = (sceneImage.naturalWidth - sourceW) / 2;
+      }
+      sceneCtx.drawImage(
+        sceneImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sw, sh
+      );
+    }
   }
 
   function buildGameSprites() {
@@ -512,22 +561,52 @@
     ctx.strokeStyle = 'rgba(86, 226, 255, 0.74)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(-10, H - 3); ctx.lineTo(W + 10, H - 3); ctx.stroke();
 
-    // glossy green pipe walls
+    // Generated glossy pipe assets; cached Canvas artwork remains offline fallback.
     for (var j = 0; j < pipes.length; j++) {
       var p = pipes[j];
       var x = p.px + (p.x - p.px) * alpha;
       var top = p.cy - p.gap / 2, bot = p.cy + p.gap / 2;
-      var bodyW = pipeBodyCanvas.width;
-      var lipW = pipeLipCanvas.width;
-      var topBodyH = Math.max(1, top - LIP + 10);
-      var bottomBodyH = Math.max(1, H - bot - LIP - 3);
-      ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, -10, bodyW, topBodyH);
-      ctx.drawImage(pipeLipCanvas, x - lipW / 2, top - LIP - 4);
-      ctx.drawImage(pipeLipCanvas, x - lipW / 2, bot - 4);
-      ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, bot + LIP, bodyW, bottomBodyH);
+      if (imageReady(pipeBodyImage) && imageReady(pipeCapImage)) {
+        var generatedBodyW = PIPE_W + 4;
+        var capW = generatedBodyW * 1.18;
+        var capH = capW * pipeCapImage.naturalHeight / pipeCapImage.naturalWidth;
+        var topBodyH = Math.max(1, top - capH * 0.56 + 10);
+        var bottomBodyY = bot + capH * 0.56;
+        ctx.drawImage(
+          pipeBodyImage, x - generatedBodyW / 2, -10, generatedBodyW, topBodyH
+        );
+        ctx.save();
+        ctx.translate(x, top);
+        ctx.rotate(Math.PI);
+        ctx.drawImage(pipeCapImage, -capW / 2, 0, capW, capH);
+        ctx.restore();
+        ctx.drawImage(
+          pipeBodyImage,
+          x - generatedBodyW / 2,
+          bottomBodyY,
+          generatedBodyW,
+          Math.max(1, H - bottomBodyY + 10)
+        );
+        ctx.drawImage(pipeCapImage, x - capW / 2, bot, capW, capH);
+      } else {
+        var bodyW = pipeBodyCanvas.width;
+        var lipW = pipeLipCanvas.width;
+        var fallbackTopBodyH = Math.max(1, top - LIP + 10);
+        var fallbackBottomBodyH = Math.max(1, H - bot - LIP - 3);
+        ctx.drawImage(pipeBodyCanvas, x - bodyW / 2, -10, bodyW, fallbackTopBodyH);
+        ctx.drawImage(pipeLipCanvas, x - lipW / 2, top - LIP - 4);
+        ctx.drawImage(pipeLipCanvas, x - lipW / 2, bot - 4);
+        ctx.drawImage(
+          pipeBodyCanvas,
+          x - bodyW / 2,
+          bot + LIP,
+          bodyW,
+          fallbackBottomBodyH
+        );
+      }
     }
 
-    // golden bird — three cached wing poses selected without new drawing work
+    // Generated golden bird — three normalized wing poses from the icon reference.
     var bx = birdX();
     var by = bird.py + (bird.y - bird.py) * alpha;
     ctx.save();
@@ -536,7 +615,11 @@
     ctx.rotate(state === S.READY ? 0 : tilt);
     var wingWave = Math.sin(bird.wing);
     var spriteIndex = wingWave > 0.35 ? 0 : (wingWave < -0.35 ? 2 : 1);
-    ctx.drawImage(birdSprites[spriteIndex], -34, -27, 68, 50);
+    if (imageReady(birdImages[spriteIndex])) {
+      ctx.drawImage(birdImages[spriteIndex], -35, -31, 70, 63);
+    } else {
+      ctx.drawImage(birdSprites[spriteIndex], -34, -27, 68, 50);
+    }
     ctx.restore();
 
     ctx.restore();
@@ -550,18 +633,13 @@
   }
 
   // ---------- main loop: fixed-timestep sim + interpolated render ----------
-  var acc = 0, tPrev = 0, lastRenderedAt = 0, slowFrameCount = 0;
+  var acc = 0, tPrev = 0, slowFrameCount = 0;
   function loop(t) {
     requestAnimationFrame(loop);
-
-    // Low-power devices render at most 30 FPS. Physics still advances in fixed
-    // 60 Hz steps, so gameplay speed and collision behavior remain consistent.
-    if (lowPowerMode && lastRenderedAt && t - lastRenderedAt < 30) return;
-    if (!tPrev) { tPrev = t; lastRenderedAt = t; return; }
+    if (!tPrev) { tPrev = t; return; }
 
     var rawFrame = (t - tPrev) / 1000;
     tPrev = t;
-    lastRenderedAt = t;
 
     // A capable device that sustains less than ~26 FPS automatically falls
     // back to the low-power resolution/effects budget after a short sample.
@@ -583,7 +661,7 @@
     render(Math.min(1, acc / FIXED_DT));
   }
   document.addEventListener('visibilitychange', function () {
-    tPrev = 0; lastRenderedAt = 0; acc = 0;
+    tPrev = 0; acc = 0;
   });
 
   // ---------- input ----------

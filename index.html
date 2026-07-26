@@ -52,10 +52,11 @@
     background-size: cover;
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", sans-serif;
-    user-select: none; -webkit-user-select: none; touch-action: manipulation;
+    user-select: none; -webkit-user-select: none; touch-action: none;
   }
   #game, #game canvas {
     position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    pointer-events: none;
   }
   .overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -327,6 +328,13 @@
       preference: 'webgl',
       autoStart: false,
       sharedTicker: false,
+      eventMode: 'none',
+      eventFeatures: {
+        move: false,
+        globalMove: false,
+        click: false,
+        wheel: false
+      },
       webgl: {
         preferWebGLVersion: 2,
         powerPreference: 'low-power',
@@ -348,6 +356,8 @@
 
       gameLayer = new PIXI.Container();
       pipeLayer = new PIXI.Container();
+      pixiApp.stage.eventMode = 'none';
+      pixiApp.stage.interactiveChildren = false;
       groundView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
       groundView.tint = 0x56e2ff;
       groundView.alpha = 0.74;

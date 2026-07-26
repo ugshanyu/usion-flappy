@@ -32,3 +32,7 @@ sprite size, pipe speed, and spacing scale from viewport width; pipe speed stays
 constant as score rises. The bird rotates gradually and visibly falls after a
 collision before the score panel appears. Long browser stalls are discarded
 instead of fast-forwarding into a collision.
+
+Pointer input is isolated from rendering: a tap only queues a flap flag, which
+the next fixed physics step consumes. The CSS background stays static, pipe
+geometry remains pooled and unchanged, and taps never trigger an extra render.

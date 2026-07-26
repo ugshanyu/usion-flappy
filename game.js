@@ -27,6 +27,7 @@
   var dark = false;
   var deadAt = 0;
   var accumulator = 0;
+  var flapQueued = false;
   var FIXED_STEP = 1 / 120;
   var MAX_STEPS = 12;
   var reducedMotion = !!(window.matchMedia &&
@@ -104,6 +105,10 @@
     accumulator += frameTime;
     var steps = 0;
     while (accumulator >= FIXED_STEP && steps < MAX_STEPS) {
+      if (flapQueued) {
+        flapQueued = false;
+        handleEvents(engine.flap());
+      }
       handleEvents(engine.step(FIXED_STEP));
       accumulator -= FIXED_STEP;
       steps++;
@@ -125,14 +130,14 @@
     hud.classList.remove('hidden');
   }
 
-  function flap() {
+  function requestFlap() {
     if (!ready) return;
     if (engine.world.state === FlappyEngine.STATES.DEAD) {
       if (performance.now() - deadAt > 700) restart();
       return;
     }
     if (engine.world.state === FlappyEngine.STATES.READY) beginPlay();
-    handleEvents(engine.flap());
+    if (engine.world.state !== FlappyEngine.STATES.DYING) flapQueued = true;
   }
 
   function restart() {
@@ -142,22 +147,26 @@
     leaderboard.reset();
     setHud(0);
     accumulator = 0;
+    flapQueued = false;
     handleEvents(engine.restart());
   }
 
   document.addEventListener('pointerdown', function (event) {
     if (event.target.closest && event.target.closest('.panel')) return;
     event.preventDefault();
-    flap();
+    requestFlap();
   }, { passive: false });
   document.addEventListener('keydown', function (event) {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
-      flap();
+      requestFlap();
     }
   });
   document.getElementById('again').addEventListener('click', restart);
-  document.addEventListener('visibilitychange', function () { accumulator = 0; });
+  document.addEventListener('visibilitychange', function () {
+    accumulator = 0;
+    if (document.hidden) flapQueued = false;
+  });
 
   document.documentElement.dataset.gameAssets = 'loading';
   renderer.init().then(function (size) {

@@ -45,6 +45,23 @@ test('pipe speed remains constant regardless of score', function () {
   assert.ok(Math.abs(moved - engine.world.metrics.pipeSpeed * 0.25) < 0.01);
 });
 
+test('flapping changes only the bird and leaves every pipe untouched', function () {
+  var engine = FlappyEngine.create({ width: 390, height: 5000, random: function () { return 0.5; } });
+  engine.flap();
+  advance(engine, 0.42);
+  var before = engine.world.pipes.map(function (pipe) {
+    return { id: pipe.id, x: pipe.x, previousX: pipe.previousX, cy: pipe.cy, gap: pipe.gap };
+  });
+  var spawnDistance = engine.world.spawnDistance;
+
+  engine.flap();
+
+  assert.deepEqual(engine.world.pipes.map(function (pipe) {
+    return { id: pipe.id, x: pipe.x, previousX: pipe.previousX, cy: pipe.cy, gap: pipe.gap };
+  }), before);
+  assert.equal(engine.world.spawnDistance, spawnDistance);
+});
+
 test('motion ratios scale from width rather than refresh rate or screen height', function () {
   var phone = FlappyEngine.create({ width: 390, height: 844 });
   var tablet = FlappyEngine.create({ width: 780, height: 1688 });

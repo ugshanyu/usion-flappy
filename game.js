@@ -25,10 +25,11 @@
   var ready = false;
   var best = 0;
   var dark = false;
+  var deadAt = 0;
   var accumulator = 0;
   var flapQueued = false;
-  var FIXED_STEP = 1 / 30;
-  var MAX_STEPS = 4;
+  var FIXED_STEP = 1 / 120;
+  var MAX_STEPS = 12;
   var reducedMotion = !!(window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var hud = document.getElementById('hud');
@@ -75,6 +76,7 @@
   }
 
   function showGameOver() {
+    deadAt = performance.now();
     hud.classList.add('hidden');
     var score = engine.world.score;
     var isNewBest = score > best && score > 0;
@@ -89,6 +91,9 @@
   function handleEvents(events) {
     for (var i = 0; i < events.length; i++) {
       if (events[i].type === 'score') setHud(events[i].score);
+      if (events[i].type === 'hit' && navigator.vibrate) {
+        try { navigator.vibrate(35); } catch (error) {}
+      }
       if (events[i].type === 'dead') showGameOver();
     }
   }
@@ -114,7 +119,10 @@
 
   var renderer = FlappyRenderer.create({
     onFrame: frame,
-    onResize: function () { accumulator = 0; }
+    onResize: function (width, height) {
+      if (engine) engine.resize(width, height);
+      accumulator = 0;
+    }
   });
 
   function beginPlay() {
@@ -124,23 +132,23 @@
 
   function requestFlap() {
     if (!ready) return;
-    if (engine.world.state === FlappyEngine.STATES.DEAD ||
-        engine.world.state === FlappyEngine.STATES.CRASH) return;
+    if (engine.world.state === FlappyEngine.STATES.DEAD) {
+      if (performance.now() - deadAt > 700) restart();
+      return;
+    }
     if (engine.world.state === FlappyEngine.STATES.READY) beginPlay();
-    flapQueued = true;
+    if (engine.world.state !== FlappyEngine.STATES.DYING) flapQueued = true;
   }
 
   function restart() {
     document.getElementById('over').classList.add('hidden');
     document.getElementById('new-best').classList.remove('show');
-    document.getElementById('start').classList.remove('hidden');
-    hud.classList.add('hidden');
+    hud.classList.remove('hidden');
     leaderboard.reset();
     setHud(0);
     accumulator = 0;
     flapQueued = false;
     handleEvents(engine.restart());
-    renderer.render(engine.world, 1);
   }
 
   document.addEventListener('pointerdown', function (event) {
@@ -182,6 +190,17 @@
     strings = STRINGS[language] || STRINGS.en;
     applyTheme(theme);
     applyStrings();
+    if (Usion.claimBackButton) {
+      Usion.claimBackButton(function () {
+        if (!engine) return false;
+        var state = engine.world.state;
+        if (state === FlappyEngine.STATES.PLAYING) {
+          handleEvents(engine.crash());
+          return true;
+        }
+        return state === FlappyEngine.STATES.DYING;
+      });
+    }
   }
 
   if (window.Usion && typeof Usion.init === 'function') {

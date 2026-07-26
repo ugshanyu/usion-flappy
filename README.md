@@ -25,19 +25,14 @@ locally in `vendor/pixi/8.19.0`, so gameplay does not depend on a third-party
 CDN. The scene uses one ticker, one bird sprite, pooled pipe containers, and no
 physics plugin or Pixi pointer hit-testing.
 
-The gameplay model in `game-engine.js` is a direct JavaScript port of the
-MIT-licensed FlapPyBird legacy implementation at commit
-`038359dc6122f8d851e816ddb3e7d28229d585e5`. It preserves that implementation's
-fixed 288×512 world, 30 FPS update order, 100px pipe gap, flap/fall velocities,
-rotation thresholds, fixed pipe cadence, four-pixel scoring window, welcome
-bob, collision transition, and crash fall. See `THIRD_PARTY_NOTICES.md`.
+The original-style motion model lives in `game-engine.js`. Physics runs at a
+fixed 120 Hz and rendering interpolates on every display refresh, so movement
+keeps the same timing on 60/90/120/144 Hz screens. Flap strength, gravity,
+sprite size, pipe speed, and spacing scale from viewport width; pipe speed stays
+constant as score rises. The bird rotates gradually and visibly falls after a
+collision before the score panel appears. Long browser stalls are discarded
+instead of fast-forwarding into a collision.
 
 Pointer input is isolated from rendering: a tap only queues a flap flag, which
-the next reference tick consumes. PixiJS interpolates the unchanged 30 FPS
-mechanics at the device display rate. The CSS background stays static, pipe
-geometry remains pooled, and taps never trigger an extra render.
-
-Only the visual assets differ from the reference game: the bird poses, pipe
-cap/body, background, icon, and social previews are the custom generated assets
-already stored in this repository. Original Flappy Bird/FlapPyBird artwork is
-not included.
+the next fixed physics step consumes. The CSS background stays static, pipe
+geometry remains pooled and unchanged, and taps never trigger an extra render.

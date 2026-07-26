@@ -1,39 +1,38 @@
 (function (root) {
   'use strict';
-  var WING_CYCLE = [0, 1, 2, 1];
+
+  var CONFIG = root.FlappyEngine.CONFIG;
 
   function create(options) {
     options = options || {};
     var app;
-    var gameLayer;
+    var worldLayer;
     var pipeLayer;
+    var pipeMask;
     var birdView;
-    var groundView;
-    var flashView;
+    var floorView;
     var birdTextures = [];
     var pipeCapTexture;
     var pipeBodyTexture;
     var views = new Map();
     var pool = [];
     var renderVersion = 0;
-    var reducedMotion = !!(root.matchMedia &&
-      root.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
     function makePipeView() {
       var view = {
         container: new PIXI.Container(),
-        topBody: new PIXI.Sprite({ texture: pipeBodyTexture }),
-        topCap: new PIXI.Sprite({ texture: pipeCapTexture }),
-        bottomBody: new PIXI.Sprite({ texture: pipeBodyTexture }),
-        bottomCap: new PIXI.Sprite({ texture: pipeCapTexture })
+        upperBody: new PIXI.Sprite({ texture: pipeBodyTexture }),
+        upperCap: new PIXI.Sprite({ texture: pipeCapTexture }),
+        lowerCap: new PIXI.Sprite({ texture: pipeCapTexture }),
+        lowerBody: new PIXI.Sprite({ texture: pipeBodyTexture })
       };
-      view.topBody.anchor.set(0.5, 0);
-      view.topCap.anchor.set(0.5, 0);
-      view.bottomBody.anchor.set(0.5, 0);
-      view.bottomCap.anchor.set(0.5, 0);
-      view.topCap.rotation = Math.PI;
+      view.upperBody.anchor.set(0.5, 0);
+      view.upperCap.anchor.set(0.5, 0);
+      view.lowerCap.anchor.set(0.5, 0);
+      view.lowerBody.anchor.set(0.5, 0);
+      view.upperCap.rotation = Math.PI;
       view.container.addChild(
-        view.topBody, view.topCap, view.bottomBody, view.bottomCap
+        view.upperBody, view.upperCap, view.lowerCap, view.lowerBody
       );
       pipeLayer.addChild(view.container);
       return view;
@@ -54,32 +53,26 @@
       pool.push(view);
     }
 
-    function layoutPipe(pipe, view, world) {
-      var m = world.metrics;
-      var top = pipe.cy - pipe.gap / 2;
-      var bottom = pipe.cy + pipe.gap / 2;
-      var bodyWidth = m.pipeWidth + 4 * m.scale;
-      var capWidth = bodyWidth * 1.18;
-      var capHeight = capWidth * pipeCapTexture.height / pipeCapTexture.width;
-      var topBodyHeight = Math.max(1, top - capHeight * 0.56 + 10);
-      var bottomBodyY = bottom + capHeight * 0.56;
+    function layoutPipe(pipe, view) {
+      var capHeight = 23;
+      var bodyWidth = 44;
+      var overlap = 6;
+      var lowerY = pipe.gapY + CONFIG.gapSize;
 
-      view.topBody.position.set(0, -10);
-      view.topBody.width = bodyWidth;
-      view.topBody.height = topBodyHeight;
-      view.topCap.position.set(0, top);
-      view.topCap.width = capWidth;
-      view.topCap.height = capHeight;
-      view.bottomCap.position.set(0, bottom);
-      view.bottomCap.width = capWidth;
-      view.bottomCap.height = capHeight;
-      view.bottomBody.position.set(0, bottomBodyY);
-      view.bottomBody.width = bodyWidth;
-      view.bottomBody.height = Math.max(1, world.height - bottomBodyY + 10);
-      view.layoutCenter = pipe.cy;
-      view.layoutGap = pipe.gap;
-      view.layoutHeight = world.height;
-      view.layoutScale = m.scale;
+      view.upperBody.position.set(CONFIG.pipeWidth / 2, pipe.gapY - CONFIG.pipeHeight);
+      view.upperBody.width = bodyWidth;
+      view.upperBody.height = CONFIG.pipeHeight - capHeight + overlap;
+      view.upperCap.position.set(CONFIG.pipeWidth / 2, pipe.gapY);
+      view.upperCap.width = CONFIG.pipeWidth;
+      view.upperCap.height = capHeight;
+
+      view.lowerCap.position.set(CONFIG.pipeWidth / 2, lowerY);
+      view.lowerCap.width = CONFIG.pipeWidth;
+      view.lowerCap.height = capHeight;
+      view.lowerBody.position.set(CONFIG.pipeWidth / 2, lowerY + capHeight - overlap);
+      view.lowerBody.width = bodyWidth;
+      view.lowerBody.height = CONFIG.pipeHeight - capHeight + overlap;
+      view.gapY = pipe.gapY;
     }
 
     function syncPipes(world, alpha) {
@@ -88,11 +81,7 @@
         var pipe = world.pipes[i];
         var view = views.get(pipe.id) || acquireView(pipe.id);
         view.renderVersion = renderVersion;
-        if (view.layoutCenter !== pipe.cy || view.layoutGap !== pipe.gap ||
-            view.layoutHeight !== world.height ||
-            view.layoutScale !== world.metrics.scale) {
-          layoutPipe(pipe, view, world);
-        }
+        if (view.gapY !== pipe.gapY) layoutPipe(pipe, view);
         view.container.x = pipe.previousX + (pipe.x - pipe.previousX) * alpha;
       }
       views.forEach(function (view, id) {
@@ -100,57 +89,45 @@
       });
     }
 
-    function birdFrame(world) {
-      var bird = world.bird;
-      if (world.state === 'dying' || world.state === 'dead') return 1;
-      if (world.state === 'ready') {
-        return WING_CYCLE[Math.floor(bird.animationTime * 8) % WING_CYCLE.length];
-      }
-      if (bird.flapAge < 0.32) {
-        return WING_CYCLE[Math.floor(bird.flapAge * 16) % WING_CYCLE.length];
-      }
-      return bird.velocityY < 0 ? 0 : 1;
-    }
-
     function render(world, alpha) {
       if (!app || !birdView) return;
-      var bird = world.bird;
-      var m = world.metrics;
       syncPipes(world, alpha);
+      var player = world.player;
+      var y = player.previousY + (player.y - player.previousY) * alpha;
+      var rotation = player.previousRotation +
+        (player.rotation - player.previousRotation) * alpha;
+      var visibleRotation = Math.min(20, rotation);
 
-      var shake = 0;
-      if (!reducedMotion && world.state === 'dying' && world.deathTime < 0.16) {
-        shake = (1 - world.deathTime / 0.16) * 6 * m.scale;
-      }
-      gameLayer.position.set(
-        shake ? (Math.random() * 2 - 1) * shake : 0,
-        shake ? (Math.random() * 2 - 1) * shake : 0
-      );
-
-      birdView.width = m.birdDrawWidth;
-      birdView.height = m.birdDrawHeight;
+      birdView.texture = birdTextures[player.frameIndex];
       birdView.position.set(
-        m.birdX,
-        bird.previousY + (bird.y - bird.previousY) * alpha
+        CONFIG.playerX + CONFIG.playerWidth / 2,
+        y + CONFIG.playerHeight / 2
       );
-      birdView.rotation = bird.previousRotation +
-        (bird.rotation - bird.previousRotation) * alpha;
-      birdView.texture = birdTextures[birdFrame(world)];
-
-      groundView.y = m.floorY;
-      flashView.alpha = !reducedMotion && world.state === 'dying'
-        ? Math.max(0, 0.28 * (1 - world.deathTime / 0.12))
-        : 0;
+      birdView.rotation = -visibleRotation * Math.PI / 180;
     }
 
     function resize() {
       if (!app || !app.renderer) return;
       var width = root.innerWidth;
       var height = root.innerHeight;
+      var scale = Math.min(width / CONFIG.width, height / CONFIG.height);
+      var offsetX = Math.floor((width - CONFIG.width * scale) / 2);
+      var offsetY = Math.floor((height - CONFIG.height * scale) / 2);
       app.renderer.resize(width, height);
-      groundView.width = width + 20;
-      flashView.width = width;
-      flashView.height = height;
+      worldLayer.scale.set(scale);
+      worldLayer.position.set(offsetX, offsetY);
+      document.documentElement.style.setProperty(
+        '--hud-top',
+        Math.floor(offsetY + CONFIG.height * 0.1 * scale) + 'px'
+      );
+      document.documentElement.style.setProperty(
+        '--hud-size',
+        Math.floor(36 * scale) + 'px'
+      );
+      document.documentElement.style.setProperty(
+        '--start-top',
+        Math.floor(offsetY + CONFIG.height * 0.12 * scale) + 'px'
+      );
       if (options.onResize) options.onResize(width, height);
     }
 
@@ -187,21 +164,28 @@
         birdTextures = textures.slice(0, 3);
         pipeCapTexture = textures[3];
         pipeBodyTexture = textures[4];
-        gameLayer = new PIXI.Container();
+        worldLayer = new PIXI.Container();
         pipeLayer = new PIXI.Container();
+        pipeMask = new PIXI.Graphics()
+          .rect(0, 0, CONFIG.width, CONFIG.baseY)
+          .fill(0xffffff);
+        pipeLayer.mask = pipeMask;
         app.stage.eventMode = 'none';
         app.stage.interactiveChildren = false;
-        groundView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
-        groundView.tint = 0x56e2ff;
-        groundView.alpha = 0.74;
-        groundView.height = 2;
-        groundView.x = -10;
-        birdView = new PIXI.Sprite({ texture: birdTextures[1] });
+
+        floorView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
+        floorView.position.set(0, CONFIG.baseY);
+        floorView.width = CONFIG.width;
+        floorView.height = 2;
+        floorView.tint = 0x56e2ff;
+        floorView.alpha = 0.74;
+
+        birdView = new PIXI.Sprite({ texture: birdTextures[0] });
         birdView.anchor.set(0.5);
-        flashView = new PIXI.Sprite({ texture: PIXI.Texture.WHITE });
-        flashView.position.set(0, 0);
-        gameLayer.addChild(pipeLayer, groundView, birdView);
-        app.stage.addChild(gameLayer, flashView);
+        birdView.width = CONFIG.playerWidth;
+        birdView.height = CONFIG.playerHeight;
+        worldLayer.addChild(pipeLayer, pipeMask, floorView, birdView);
+        app.stage.addChild(worldLayer);
         resize();
         root.addEventListener('resize', resize);
         app.ticker.add(options.onFrame, undefined, PIXI.UPDATE_PRIORITY.HIGH);
@@ -210,15 +194,15 @@
           : undefined;
       }).then(function () {
         app.start();
-        return { width: root.innerWidth, height: root.innerHeight };
+        return { width: CONFIG.width, height: CONFIG.height };
       });
     }
 
-    function setDark(dark) {
-      if (flashView) flashView.tint = dark ? 0xffffff : 0x000000;
-    }
-
-    return { init: init, render: render, setDark: setDark };
+    return {
+      init: init,
+      render: render,
+      setDark: function () {}
+    };
   }
 
   root.FlappyRenderer = { create: create };

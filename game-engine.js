@@ -1,3 +1,9 @@
+/*
+ * Mechanics ported from sourabhv/FlapPyBird legacy flappy.py at
+ * commit 038359dc6122f8d851e816ddb3e7d28229d585e5 (MIT).
+ * Modified in July 2026 for JavaScript/Pixi rendering and Usion assets.
+ * See licenses/FlapPyBird-MIT.txt and THIRD_PARTY_NOTICES.md.
+ */
 (function (root, factory) {
   'use strict';
   var api = factory();
@@ -6,246 +12,255 @@
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
 
-  var STATES = { READY: 'ready', PLAYING: 'playing', DYING: 'dying', DEAD: 'dead' };
-  var BASE_WIDTH = 390;
+  var STATES = { READY: 'ready', PLAYING: 'playing', CRASH: 'crash', DEAD: 'dead' };
+  var CONFIG = {
+    fps: 30,
+    width: 288,
+    height: 512,
+    baseY: 512 * 0.79,
+    gapSize: 100,
+    pipeWidth: 52,
+    pipeHeight: 320,
+    pipeVelocityX: -128 / 30,
+    playerX: Math.floor(288 * 0.2),
+    playerWidth: 34,
+    playerHeight: 24
+  };
   var EMPTY_EVENTS = [];
+  var ANIMATION = [0, 1, 2, 1];
 
-  function clamp(value, low, high) {
-    return Math.max(low, Math.min(high, value));
+  function overlaps(a, b) {
+    return a.x < b.x + b.width && a.x + a.width > b.x &&
+      a.y < b.y + b.height && a.y + a.height > b.y;
   }
 
   function create(options) {
     options = options || {};
     var random = options.random || Math.random;
     var world = {
-      width: Math.max(1, options.width || BASE_WIDTH),
-      height: Math.max(1, options.height || 700),
       state: STATES.READY,
       score: 0,
-      bird: null,
+      player: null,
       pipes: [],
-      metrics: {},
-      spawnDistance: 0,
+      loopIteration: 0,
+      animationCursor: 0,
       nextPipeId: 1,
-      deathTime: 0
+      pendingFlap: false,
+      groundCrash: false
     };
 
-    function configure() {
-      var scale = clamp(world.width / BASE_WIDTH, 0.72, 1.6);
-      var gap = Math.min(world.height * 0.24, 158 * scale);
-      world.metrics = {
-        scale: scale,
-        gravity: 1500 * scale,
-        flapVelocity: -430 * scale,
-        maxFallVelocity: 720 * scale,
-        pipeSpeed: 165 * scale,
-        pipeSpacing: 252 * scale,
-        pipeGap: Math.max(132 * scale, gap),
-        pipeWidth: 68 * scale,
-        birdDrawWidth: 52 * scale,
-        birdDrawHeight: 46 * scale,
-        birdHitWidth: 26 * scale,
-        birdHitHeight: 22 * scale,
-        birdX: Math.max(76 * scale, world.width * 0.25),
-        floorY: world.height - Math.max(5, 6 * scale),
-        pipeMargin: Math.max(62 * scale, world.height * 0.09)
-      };
-    }
-
     function reset() {
-      configure();
-      var y = world.height * 0.46;
+      var y = Math.floor((CONFIG.height - CONFIG.playerHeight) / 2);
       world.state = STATES.READY;
       world.score = 0;
-      world.bird = {
+      world.player = {
         y: y,
         previousY: y,
         velocityY: 0,
         rotation: 0,
         previousRotation: 0,
-        animationTime: 0,
-        flapAge: 1
+        frameIndex: 0,
+        shmValue: 0,
+        shmDirection: 1,
+        flapped: false
       };
       world.pipes = [];
-      world.spawnDistance = world.metrics.pipeSpacing * 0.74;
+      world.loopIteration = 0;
+      world.animationCursor = 0;
       world.nextPipeId = 1;
-      world.deathTime = 0;
+      world.pendingFlap = false;
+      world.groundCrash = false;
     }
 
-    function resize(width, height) {
-      var oldHeight = world.height;
-      world.width = Math.max(1, width);
-      world.height = Math.max(1, height);
-      configure();
-      if (world.state === STATES.READY) {
-        world.bird.y = world.height * 0.46;
-        world.bird.previousY = world.bird.y;
-      } else if (oldHeight !== world.height) {
-        var maxY = world.metrics.floorY - world.metrics.birdHitHeight / 2;
-        world.bird.y = Math.min(world.bird.y, maxY);
-        world.bird.previousY = Math.min(world.bird.previousY, maxY);
-      }
-      for (var i = 0; i < world.pipes.length; i++) {
-        world.pipes[i].gap = world.metrics.pipeGap;
-        world.pipes[i].cy = clampPipeCenter(world.pipes[i].cy);
-      }
+    function nextAnimationFrame() {
+      world.animationCursor = (world.animationCursor + 1) % ANIMATION.length;
+      world.player.frameIndex = ANIMATION[world.animationCursor];
     }
 
-    function clampPipeCenter(center) {
-      var m = world.metrics;
-      var low = m.pipeMargin + m.pipeGap / 2;
-      var high = m.floorY - m.pipeMargin - m.pipeGap / 2;
-      return clamp(center, low, Math.max(low, high));
+    function randomGapY() {
+      var range = Math.floor(CONFIG.baseY * 0.6 - CONFIG.gapSize);
+      return Math.floor(random() * range) + Math.floor(CONFIG.baseY * 0.2);
     }
 
-    function spawnPipe() {
-      var m = world.metrics;
-      var low = m.pipeMargin + m.pipeGap / 2;
-      var high = Math.max(low, m.floorY - m.pipeMargin - m.pipeGap / 2);
-      var previous = world.pipes.length
-        ? world.pipes[world.pipes.length - 1].cy
-        : world.height * 0.5;
-      var center = low + random() * (high - low);
-      center = clamp(center, previous - 125 * m.scale, previous + 125 * m.scale);
-      center = clampPipeCenter(center);
-      var x = world.width + m.pipeWidth;
-      world.pipes.push({
+    function makePipe(x) {
+      return {
         id: world.nextPipeId++,
         x: x,
         previousX: x,
-        cy: center,
-        gap: m.pipeGap,
-        passed: false
-      });
+        gapY: randomGapY()
+      };
+    }
+
+    function spawnInitialPipes() {
+      world.pipes = [
+        makePipe(CONFIG.width + 200),
+        makePipe(CONFIG.width + 200 + CONFIG.width / 2)
+      ];
     }
 
     function start() {
-      if (world.state !== STATES.READY) return [];
+      if (world.state !== STATES.READY) return EMPTY_EVENTS;
       world.state = STATES.PLAYING;
-      return flap();
+      world.player.velocityY = -9;
+      world.player.rotation = 45;
+      world.player.previousRotation = 45;
+      world.player.flapped = false;
+      world.loopIteration = 0;
+      spawnInitialPipes();
+      return [{ type: 'start' }, { type: 'flap' }];
     }
 
     function flap() {
       if (world.state === STATES.READY) return start();
-      if (world.state !== STATES.PLAYING) return [];
-      world.bird.velocityY = world.metrics.flapVelocity;
-      world.bird.flapAge = 0;
-      world.bird.animationTime = 0;
-      world.bird.previousY = world.bird.y;
-      world.bird.previousRotation = world.bird.rotation;
-      return [{ type: 'flap' }];
+      if (world.state !== STATES.PLAYING) return EMPTY_EVENTS;
+      world.pendingFlap = true;
+      return EMPTY_EVENTS;
     }
 
-    function beginDeath() {
-      if (world.state !== STATES.PLAYING) return [];
-      world.state = STATES.DYING;
-      world.deathTime = 0;
-      world.bird.velocityY = Math.max(world.bird.velocityY, 90 * world.metrics.scale);
-      return [{ type: 'hit' }];
+    function pipeCollision(pipe) {
+      var player = {
+        x: CONFIG.playerX + 2,
+        y: world.player.y + 2,
+        width: CONFIG.playerWidth - 4,
+        height: CONFIG.playerHeight - 4
+      };
+      var capHeight = 23;
+      var upperBody = {
+        x: pipe.x + 4,
+        y: pipe.gapY - CONFIG.pipeHeight,
+        width: CONFIG.pipeWidth - 8,
+        height: CONFIG.pipeHeight - capHeight
+      };
+      var upperCap = {
+        x: pipe.x,
+        y: pipe.gapY - capHeight,
+        width: CONFIG.pipeWidth,
+        height: capHeight
+      };
+      var lowerCap = {
+        x: pipe.x,
+        y: pipe.gapY + CONFIG.gapSize,
+        width: CONFIG.pipeWidth,
+        height: capHeight
+      };
+      var lowerBody = {
+        x: pipe.x + 4,
+        y: pipe.gapY + CONFIG.gapSize + capHeight,
+        width: CONFIG.pipeWidth - 8,
+        height: CONFIG.pipeHeight - capHeight
+      };
+      return overlaps(player, upperBody) || overlaps(player, upperCap) ||
+        overlaps(player, lowerCap) || overlaps(player, lowerBody);
     }
 
-    function restart() {
-      reset();
-      world.state = STATES.PLAYING;
-      return flap();
+    function beginCrash(groundCrash) {
+      world.state = STATES.CRASH;
+      world.groundCrash = groundCrash;
+      world.pendingFlap = false;
+      world.player.flapped = false;
+      return [{ type: 'hit', groundCrash: groundCrash }];
     }
 
-    function updateBirdPose(dt) {
-      var bird = world.bird;
-      var m = world.metrics;
-      var target;
-      if (bird.velocityY < -40 * m.scale) {
-        target = -0.34;
-      } else {
-        target = clamp(-0.08 + bird.velocityY / (650 * m.scale), -0.08, 1.42);
+    function collisionEvents() {
+      if (world.player.y + CONFIG.playerHeight >= CONFIG.baseY - 1) {
+        return beginCrash(true);
       }
-      var response = target < bird.rotation ? 18 : 4.6;
-      bird.rotation += (target - bird.rotation) * (1 - Math.exp(-response * dt));
+      for (var i = 0; i < world.pipes.length; i++) {
+        if (pipeCollision(world.pipes[i])) return beginCrash(false);
+      }
+      return null;
     }
 
-    function intersectsPipe(pipe) {
-      var m = world.metrics;
-      var bird = world.bird;
-      var horizontal = Math.abs(pipe.x - m.birdX) <
-        (m.pipeWidth + m.birdHitWidth) / 2;
-      if (!horizontal) return false;
-      var top = pipe.cy - pipe.gap / 2;
-      var bottom = pipe.cy + pipe.gap / 2;
-      return bird.y - m.birdHitHeight / 2 < top ||
-        bird.y + m.birdHitHeight / 2 > bottom;
-    }
-
-    function step(dt) {
-      var events = null;
-      var bird = world.bird;
-      var m = world.metrics;
-      bird.previousY = bird.y;
-      bird.previousRotation = bird.rotation;
-      bird.animationTime += dt;
-      bird.flapAge += dt;
-
-      if (world.state === STATES.READY) {
-        bird.y = world.height * 0.46 + Math.sin(bird.animationTime * 4.2) * 7 * m.scale;
-        bird.rotation = 0;
-        return EMPTY_EVENTS;
-      }
-
-      if (world.state === STATES.DEAD) return EMPTY_EVENTS;
-
-      bird.velocityY = Math.min(m.maxFallVelocity, bird.velocityY + m.gravity * dt);
-      bird.y += bird.velocityY * dt;
-      updateBirdPose(dt);
-
-      if (world.state === STATES.DYING) {
-        for (var frozen = 0; frozen < world.pipes.length; frozen++) {
-          world.pipes[frozen].previousX = world.pipes[frozen].x;
-        }
-        world.deathTime += dt;
-        bird.rotation += (1.5 - bird.rotation) * (1 - Math.exp(-7 * dt));
-        var ground = m.floorY - m.birdHitHeight / 2;
-        if (bird.y >= ground) {
-          bird.y = ground;
-          bird.velocityY = 0;
-        }
-        if (bird.y >= ground || world.deathTime >= 1.05) {
-          world.state = STATES.DEAD;
-          return [{ type: 'dead' }];
-        }
-        return EMPTY_EVENTS;
-      }
-
-      if (bird.y < m.birdHitHeight / 2) {
-        bird.y = m.birdHitHeight / 2;
-        bird.velocityY = Math.max(0, bird.velocityY);
-      }
-
-      world.spawnDistance += m.pipeSpeed * dt;
-      if (world.spawnDistance >= m.pipeSpacing) {
-        world.spawnDistance -= m.pipeSpacing;
-        spawnPipe();
-      }
-
-      for (var i = world.pipes.length - 1; i >= 0; i--) {
-        var pipe = world.pipes[i];
-        pipe.previousX = pipe.x;
-        pipe.x -= m.pipeSpeed * dt;
-        if (!pipe.passed && pipe.x + m.pipeWidth / 2 < m.birdX) {
-          pipe.passed = true;
+    function scoreEvents() {
+      var playerMid = CONFIG.playerX + CONFIG.playerWidth / 2;
+      for (var i = 0; i < world.pipes.length; i++) {
+        var pipeMid = world.pipes[i].x + CONFIG.pipeWidth / 2;
+        if (pipeMid <= playerMid && playerMid < pipeMid + 4) {
           world.score++;
-          if (!events) events = [];
-          events.push({ type: 'score', score: world.score });
-        }
-        if (pipe.x < -m.pipeWidth) {
-          world.pipes.splice(i, 1);
-        } else if (intersectsPipe(pipe)) {
-          return events ? events.concat(beginDeath()) : beginDeath();
+          return [{ type: 'score', score: world.score }];
         }
       }
+      return null;
+    }
 
-      if (bird.y + m.birdHitHeight / 2 >= m.floorY) {
-        return events ? events.concat(beginDeath()) : beginDeath();
+    function stepReady() {
+      var player = world.player;
+      player.previousY = player.y;
+      player.previousRotation = player.rotation;
+      if ((world.loopIteration + 1) % 5 === 0) nextAnimationFrame();
+      world.loopIteration = (world.loopIteration + 1) % CONFIG.fps;
+      if (Math.abs(player.shmValue) === 8) player.shmDirection *= -1;
+      player.shmValue += player.shmDirection;
+      player.y = Math.floor((CONFIG.height - CONFIG.playerHeight) / 2) +
+        player.shmValue;
+      return EMPTY_EVENTS;
+    }
+
+    function stepPlaying() {
+      var player = world.player;
+      if (world.pendingFlap && player.y > -2 * CONFIG.playerHeight) {
+        player.velocityY = -9;
+        player.flapped = true;
+        player.rotation = 45;
+      }
+      world.pendingFlap = false;
+
+      var collision = collisionEvents();
+      if (collision) return collision;
+      var events = scoreEvents();
+      player.previousY = player.y;
+      player.previousRotation = player.rotation;
+
+      if ((world.loopIteration + 1) % 3 === 0) nextAnimationFrame();
+      world.loopIteration = (world.loopIteration + 1) % CONFIG.fps;
+      if (player.rotation > -90) player.rotation -= 3;
+      if (player.velocityY < 10 && !player.flapped) player.velocityY += 1;
+      if (player.flapped) player.flapped = false;
+      player.y += Math.min(
+        player.velocityY,
+        CONFIG.baseY - player.y - CONFIG.playerHeight
+      );
+
+      for (var i = 0; i < world.pipes.length; i++) {
+        world.pipes[i].previousX = world.pipes[i].x;
+        world.pipes[i].x += CONFIG.pipeVelocityX;
+      }
+      if (world.pipes.length < 3 && world.pipes[0].x > 0 && world.pipes[0].x < 5) {
+        world.pipes.push(makePipe(CONFIG.width + 10));
+      }
+      if (world.pipes.length && world.pipes[0].x < -CONFIG.pipeWidth) {
+        world.pipes.shift();
       }
       return events || EMPTY_EVENTS;
+    }
+
+    function stepCrash() {
+      var player = world.player;
+      player.previousY = player.y;
+      player.previousRotation = player.rotation;
+      for (var i = 0; i < world.pipes.length; i++) {
+        world.pipes[i].previousX = world.pipes[i].x;
+      }
+      if (player.y + CONFIG.playerHeight < CONFIG.baseY - 1) {
+        player.y += Math.min(
+          player.velocityY,
+          CONFIG.baseY - player.y - CONFIG.playerHeight
+        );
+      }
+      if (player.velocityY < 15) player.velocityY += 2;
+      if (!world.groundCrash && player.rotation > -90) player.rotation -= 7;
+      if (player.y + CONFIG.playerHeight >= CONFIG.baseY - 1) {
+        world.state = STATES.DEAD;
+        return [{ type: 'dead' }];
+      }
+      return EMPTY_EVENTS;
+    }
+
+    function step() {
+      if (world.state === STATES.READY) return stepReady();
+      if (world.state === STATES.PLAYING) return stepPlaying();
+      if (world.state === STATES.CRASH) return stepCrash();
+      return EMPTY_EVENTS;
     }
 
     reset();
@@ -253,12 +268,10 @@
       world: world,
       states: STATES,
       flap: flap,
-      restart: restart,
-      crash: beginDeath,
-      resize: resize,
+      restart: function () { reset(); return EMPTY_EVENTS; },
       step: step
     };
   }
 
-  return { create: create, STATES: STATES };
+  return { create: create, STATES: STATES, CONFIG: CONFIG };
 });

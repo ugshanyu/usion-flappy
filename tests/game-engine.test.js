@@ -30,19 +30,27 @@ test('flap produces the classic short rise followed by a fall', function () {
   assert.ok(engine.world.bird.rotation > 0);
 });
 
-test('pipe speed remains constant regardless of score', function () {
-  var engine = FlappyEngine.create({ width: 390, height: 5000, random: function () { return 0.5; } });
-  engine.flap();
-  advance(engine, 0.42);
-  assert.equal(engine.world.pipes.length, 1);
+test('pipe speed rises 2% every 10 points and caps at 20%', function () {
+  function movementAtScore(score) {
+    var engine = FlappyEngine.create({ width: 390, height: 5000, random: function () { return 0.5; } });
+    engine.flap();
+    advance(engine, 0.42);
+    assert.equal(engine.world.pipes.length, 1);
 
-  var pipe = engine.world.pipes[0];
-  var startX = pipe.x;
-  engine.world.score = 100;
-  advance(engine, 0.25);
-  var moved = startX - pipe.x;
+    var pipe = engine.world.pipes[0];
+    var startX = pipe.x;
+    engine.world.score = score;
+    advance(engine, 0.25);
+    return startX - pipe.x;
+  }
 
-  assert.ok(Math.abs(moved - engine.world.metrics.pipeSpeed * 0.25) < 0.01);
+  var baseMovement = 170 * 0.25;
+  assert.ok(Math.abs(movementAtScore(9) - baseMovement) < 0.01);
+  assert.ok(Math.abs(movementAtScore(10) - baseMovement * 1.02) < 0.01);
+  assert.ok(Math.abs(movementAtScore(20) - baseMovement * 1.04) < 0.01);
+  assert.ok(Math.abs(movementAtScore(99) - baseMovement * 1.18) < 0.01);
+  assert.ok(Math.abs(movementAtScore(100) - baseMovement * 1.2) < 0.01);
+  assert.ok(Math.abs(movementAtScore(1000) - baseMovement * 1.2) < 0.01);
 });
 
 test('flapping changes only the bird and leaves every pipe untouched', function () {

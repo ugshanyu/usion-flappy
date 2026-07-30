@@ -186,6 +186,11 @@
       return clamp(center, low, Math.max(low, high));
     }
 
+    function pipeSpeedForScore(score) {
+      var speedSteps = Math.min(10, Math.floor(Math.max(0, score) / 10));
+      return world.metrics.pipeSpeed * (1 + speedSteps * 0.02);
+    }
+
     function spawnPipe() {
       var m = world.metrics;
       var low = m.pipeMargin + m.pipeGap / 2;
@@ -382,7 +387,8 @@
         bird.velocityY = Math.max(0, bird.velocityY);
       }
 
-      world.spawnDistance += m.pipeSpeed * dt;
+      var pipeSpeed = pipeSpeedForScore(world.score);
+      world.spawnDistance += pipeSpeed * dt;
       if (world.spawnDistance >= m.pipeSpacing) {
         world.spawnDistance -= m.pipeSpacing;
         spawnPipe();
@@ -391,7 +397,7 @@
       for (var i = world.pipes.length - 1; i >= 0; i--) {
         var pipe = world.pipes[i];
         pipe.previousX = pipe.x;
-        pipe.x -= m.pipeSpeed * dt;
+        pipe.x -= pipeSpeed * dt;
         if (!pipe.passed && pipe.x + m.pipeCapWidth / 2 < m.birdX) {
           pipe.passed = true;
           world.score++;

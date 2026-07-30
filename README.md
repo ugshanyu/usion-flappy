@@ -33,7 +33,9 @@ transitions are tuned for a firm but recoverable challenge. Bird collision uses
 alpha silhouettes derived from all three visible wing frames, transformed with
 the rendered rotation, so transparent sprite corners never behave like a
 rectangular hitbox. Flap strength, gravity, sprite size, pipe speed, and spacing
-scale from viewport width; pipe speed stays constant as score rises. The bird
+scale from viewport width. Pipe speed rises 2% every 10 points and caps at a
+20% increase, keeping early play approachable without letting long runs go
+flat. The bird
 rotates gradually and visibly falls after a collision before the score panel
 appears. Long browser stalls are discarded instead of fast-forwarding into a
 collision.

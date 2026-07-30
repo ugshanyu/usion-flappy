@@ -1,6 +1,5 @@
 (function (root) {
   'use strict';
-  var WING_CYCLE = [0, 1, 2, 1];
 
   function create(options) {
     options = options || {};
@@ -100,18 +99,6 @@
       });
     }
 
-    function birdFrame(world) {
-      var bird = world.bird;
-      if (world.state === 'dying' || world.state === 'dead') return 1;
-      if (world.state === 'ready') {
-        return WING_CYCLE[Math.floor(bird.animationTime * 8) % WING_CYCLE.length];
-      }
-      if (bird.flapAge < 0.32) {
-        return WING_CYCLE[Math.floor(bird.flapAge * 16) % WING_CYCLE.length];
-      }
-      return bird.velocityY < 0 ? 0 : 1;
-    }
-
     function render(world, alpha) {
       if (!app || !birdView) return;
       var bird = world.bird;
@@ -135,7 +122,7 @@
       );
       birdView.rotation = bird.previousRotation +
         (bird.rotation - bird.previousRotation) * alpha;
-      birdView.texture = birdTextures[birdFrame(world)];
+      birdView.texture = birdTextures[bird.frameIndex];
 
       groundView.y = m.floorY;
       flashView.alpha = !reducedMotion && world.state === 'dying'

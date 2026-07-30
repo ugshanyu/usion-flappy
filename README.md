@@ -28,13 +28,15 @@ physics plugin or Pixi pointer hit-testing.
 The reference-tuned motion model lives in `game-engine.js`. Physics runs at a
 fixed 120 Hz and rendering interpolates on every display refresh, so movement
 keeps the same timing on 60/90/120/144 Hz screens. The flap arc stays close to
-the classic 30 FPS implementation while tighter gaps, reference-scale collision
-geometry, closer pipe cadence, and larger vertical transitions preserve its
-precision challenge. Flap strength, gravity, sprite size, pipe speed, and
-spacing scale from viewport width; pipe speed stays constant as score rises.
-The bird rotates gradually and visibly falls after a collision before the score
-panel appears. Long browser stalls are discarded instead of fast-forwarding
-into a collision.
+the classic 30 FPS implementation, while the pipe cadence and vertical
+transitions are tuned for a firm but recoverable challenge. Bird collision uses
+alpha silhouettes derived from all three visible wing frames, transformed with
+the rendered rotation, so transparent sprite corners never behave like a
+rectangular hitbox. Flap strength, gravity, sprite size, pipe speed, and spacing
+scale from viewport width; pipe speed stays constant as score rises. The bird
+rotates gradually and visibly falls after a collision before the score panel
+appears. Long browser stalls are discarded instead of fast-forwarding into a
+collision.
 
 Pointer input is isolated from rendering: a tap only queues a flap flag, which
 the next fixed physics step consumes. The CSS background stays static, pipe

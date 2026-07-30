@@ -72,35 +72,34 @@ test('motion ratios scale from width rather than refresh rate or screen height',
   assert.equal(tablet.world.metrics.birdDrawWidth, phone.world.metrics.birdDrawWidth * 1.6);
 });
 
-test('base-width obstacle geometry uses the reference difficulty targets', function () {
+test('base-width obstacle geometry uses balanced difficulty targets', function () {
   var engine = FlappyEngine.create({ width: 390, height: 844 });
   var metrics = engine.world.metrics;
 
-  assert.equal(metrics.pipeGap, 135);
-  assert.equal(metrics.pipeSpeed, 173);
-  assert.equal(metrics.pipeSpacing, 195);
+  assert.equal(metrics.pipeGap, 160);
+  assert.equal(metrics.pipeSpeed, 170);
+  assert.equal(metrics.pipeSpacing, 225);
   assert.equal(metrics.pipeWidth, 72);
   assert.equal(metrics.pipeCapWidth, 85);
   assert.equal(metrics.pipeCapHeight, 38);
-  assert.equal(metrics.maxPipeShift, 190);
-  assert.equal(metrics.birdHitWidth, 40);
-  assert.equal(metrics.birdHitHeight, 28);
-  assert.equal(metrics.pipeGap - metrics.birdHitHeight, 107);
+  assert.equal(metrics.maxPipeShift, 160);
+  assert.ok(!('birdHitWidth' in metrics));
+  assert.ok(!('birdHitHeight' in metrics));
 });
 
-test('the first pipe uses the full random range instead of being centered', function () {
+test('the first pipe starts within a recoverable distance from center', function () {
   var engine = FlappyEngine.create({
     width: 390,
     height: 5000,
     random: function () { return 0; }
   });
   engine.flap();
-  advance(engine, 0.3);
+  advance(engine, 0.35);
 
   assert.equal(engine.world.pipes.length, 1);
   assert.equal(
     engine.world.pipes[0].cy,
-    engine.world.metrics.pipeMargin + engine.world.metrics.pipeGap / 2
+    engine.world.height * 0.5 - engine.world.metrics.maxPipeShift
   );
 });
 
@@ -112,7 +111,7 @@ test('adjacent pipe shifts are challenging but remain bounded', function () {
     random: function () { return values.shift(); }
   });
   engine.flap();
-  advance(engine, 1.45);
+  advance(engine, 1.7);
 
   assert.equal(engine.world.pipes.length, 2);
   assert.equal(
@@ -121,23 +120,59 @@ test('adjacent pipe shifts are challenging but remain bounded', function () {
   );
 });
 
-test('the rendered pipe cap width participates in collisions', function () {
+test('transparent sprite corners do not collide like a square hitbox', function () {
+  function placeAtUpperCorner(pipeOffset) {
+    var engine = FlappyEngine.create({
+      width: 390,
+      height: 5000,
+      random: function () { return 0.5; }
+    });
+    engine.flap();
+    advance(engine, 0.35);
+
+    var metrics = engine.world.metrics;
+    var pipe = engine.world.pipes[0];
+    engine.world.bird.y = 2400;
+    engine.world.bird.previousY = engine.world.bird.y;
+    engine.world.bird.velocityY = 0;
+    engine.world.bird.rotation = 0;
+    engine.world.bird.previousRotation = 0;
+    engine.world.bird.flapAge = 1;
+    engine.world.bird.frameIndex = 1;
+    pipe.cy = engine.world.bird.y - 17 + pipe.gap / 2;
+    pipe.x = metrics.birdX + pipeOffset + metrics.pipeSpeed * STEP;
+    pipe.previousX = pipe.x;
+    return engine.step(STEP);
+  }
+
+  var cornerOnly = placeAtUpperCorner(-62.5);
+  var visibleFeathers = placeAtUpperCorner(-40);
+
+  assert.ok(!cornerOnly.some(function (event) { return event.type === 'hit'; }));
+  assert.ok(visibleFeathers.some(function (event) { return event.type === 'hit'; }));
+});
+
+test('the visible pipe cap still collides with the bird silhouette', function () {
   var engine = FlappyEngine.create({
     width: 390,
     height: 5000,
     random: function () { return 0.5; }
   });
   engine.flap();
-  advance(engine, 0.3);
+  advance(engine, 0.35);
 
   var metrics = engine.world.metrics;
   var pipe = engine.world.pipes[0];
   var top = pipe.cy - pipe.gap / 2;
-  pipe.x = metrics.birdX + 59 + metrics.pipeSpeed * STEP;
+  pipe.x = metrics.birdX + 45 + metrics.pipeSpeed * STEP;
   pipe.previousX = pipe.x;
-  engine.world.bird.y = top - metrics.birdHitHeight / 2 + 1;
+  engine.world.bird.y = top - 12;
   engine.world.bird.previousY = engine.world.bird.y;
   engine.world.bird.velocityY = 0;
+  engine.world.bird.rotation = 0;
+  engine.world.bird.previousRotation = 0;
+  engine.world.bird.flapAge = 1;
+  engine.world.bird.frameIndex = 1;
 
   var events = engine.step(STEP);
 
@@ -171,6 +206,6 @@ test('the ceiling clamps the bird without a sudden game over', function () {
   advance(engine, STEP);
 
   assert.equal(engine.world.state, FlappyEngine.STATES.PLAYING);
-  assert.ok(engine.world.bird.y >= engine.world.metrics.birdHitHeight / 2);
+  assert.ok(engine.world.bird.y > 2);
   assert.ok(engine.world.bird.velocityY >= 0);
 });

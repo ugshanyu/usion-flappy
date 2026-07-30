@@ -76,13 +76,15 @@ test('base-width obstacle geometry uses balanced difficulty targets', function (
   var engine = FlappyEngine.create({ width: 390, height: 844 });
   var metrics = engine.world.metrics;
 
-  assert.equal(metrics.pipeGap, 160);
+  assert.equal(metrics.pipeGap, 164);
   assert.equal(metrics.pipeSpeed, 170);
   assert.equal(metrics.pipeSpacing, 225);
   assert.equal(metrics.pipeWidth, 72);
   assert.equal(metrics.pipeCapWidth, 85);
   assert.equal(metrics.pipeCapHeight, 38);
   assert.equal(metrics.maxPipeShift, 160);
+  assert.equal(metrics.birdDrawWidth, 56);
+  assert.equal(metrics.birdDrawHeight, 50);
   assert.ok(!('birdHitWidth' in metrics));
   assert.ok(!('birdHitHeight' in metrics));
 });

@@ -115,7 +115,7 @@
 
     function configure() {
       var scale = clamp(world.width / BASE_WIDTH, 0.72, 1.6);
-      var gap = Math.min(world.height * 0.24, 160 * scale);
+      var gap = Math.min(world.height * 0.24, 164 * scale);
       world.metrics = {
         scale: scale,
         gravity: 1500 * scale,
@@ -123,13 +123,13 @@
         maxFallVelocity: 720 * scale,
         pipeSpeed: 170 * scale,
         pipeSpacing: 225 * scale,
-        pipeGap: Math.max(130 * scale, gap),
+        pipeGap: Math.max(134 * scale, gap),
         pipeWidth: 72 * scale,
         pipeCapWidth: 85 * scale,
         pipeCapHeight: 38 * scale,
         maxPipeShift: 160 * scale,
-        birdDrawWidth: 52 * scale,
-        birdDrawHeight: 46 * scale,
+        birdDrawWidth: 56 * scale,
+        birdDrawHeight: 50 * scale,
         birdX: Math.max(76 * scale, world.width * 0.25),
         floorY: world.height - Math.max(5, 6 * scale),
         pipeMargin: Math.max(62 * scale, world.height * 0.09)

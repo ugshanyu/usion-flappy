@@ -32,20 +32,23 @@
 
     function configure() {
       var scale = clamp(world.width / BASE_WIDTH, 0.72, 1.6);
-      var gap = Math.min(world.height * 0.24, 158 * scale);
+      var gap = Math.min(world.height * 0.24, 135 * scale);
       world.metrics = {
         scale: scale,
         gravity: 1500 * scale,
         flapVelocity: -430 * scale,
         maxFallVelocity: 720 * scale,
-        pipeSpeed: 165 * scale,
-        pipeSpacing: 252 * scale,
-        pipeGap: Math.max(132 * scale, gap),
-        pipeWidth: 68 * scale,
+        pipeSpeed: 173 * scale,
+        pipeSpacing: 195 * scale,
+        pipeGap: Math.max(112 * scale, gap),
+        pipeWidth: 72 * scale,
+        pipeCapWidth: 85 * scale,
+        pipeCapHeight: 38 * scale,
+        maxPipeShift: 190 * scale,
         birdDrawWidth: 52 * scale,
         birdDrawHeight: 46 * scale,
-        birdHitWidth: 26 * scale,
-        birdHitHeight: 22 * scale,
+        birdHitWidth: 40 * scale,
+        birdHitHeight: 28 * scale,
         birdX: Math.max(76 * scale, world.width * 0.25),
         floorY: world.height - Math.max(5, 6 * scale),
         pipeMargin: Math.max(62 * scale, world.height * 0.09)
@@ -102,13 +105,17 @@
       var m = world.metrics;
       var low = m.pipeMargin + m.pipeGap / 2;
       var high = Math.max(low, m.floorY - m.pipeMargin - m.pipeGap / 2);
-      var previous = world.pipes.length
-        ? world.pipes[world.pipes.length - 1].cy
-        : world.height * 0.5;
       var center = low + random() * (high - low);
-      center = clamp(center, previous - 125 * m.scale, previous + 125 * m.scale);
+      if (world.pipes.length) {
+        var previous = world.pipes[world.pipes.length - 1].cy;
+        center = clamp(
+          center,
+          previous - m.maxPipeShift,
+          previous + m.maxPipeShift
+        );
+      }
       center = clampPipeCenter(center);
-      var x = world.width + m.pipeWidth;
+      var x = world.width + m.pipeCapWidth;
       world.pipes.push({
         id: world.nextPipeId++,
         x: x,
@@ -166,13 +173,26 @@
     function intersectsPipe(pipe) {
       var m = world.metrics;
       var bird = world.bird;
-      var horizontal = Math.abs(pipe.x - m.birdX) <
-        (m.pipeWidth + m.birdHitWidth) / 2;
-      if (!horizontal) return false;
       var top = pipe.cy - pipe.gap / 2;
       var bottom = pipe.cy + pipe.gap / 2;
-      return bird.y - m.birdHitHeight / 2 < top ||
-        bird.y + m.birdHitHeight / 2 > bottom;
+      var birdTop = bird.y - m.birdHitHeight / 2;
+      var birdBottom = bird.y + m.birdHitHeight / 2;
+      var obstacleWidth;
+
+      if (birdTop < top) {
+        obstacleWidth = birdBottom > top - m.pipeCapHeight
+          ? m.pipeCapWidth
+          : m.pipeWidth;
+      } else if (birdBottom > bottom) {
+        obstacleWidth = birdTop < bottom + m.pipeCapHeight
+          ? m.pipeCapWidth
+          : m.pipeWidth;
+      } else {
+        return false;
+      }
+
+      return Math.abs(pipe.x - m.birdX) <
+        (obstacleWidth + m.birdHitWidth) / 2;
     }
 
     function step(dt) {
@@ -229,13 +249,13 @@
         var pipe = world.pipes[i];
         pipe.previousX = pipe.x;
         pipe.x -= m.pipeSpeed * dt;
-        if (!pipe.passed && pipe.x + m.pipeWidth / 2 < m.birdX) {
+        if (!pipe.passed && pipe.x + m.pipeCapWidth / 2 < m.birdX) {
           pipe.passed = true;
           world.score++;
           if (!events) events = [];
           events.push({ type: 'score', score: world.score });
         }
-        if (pipe.x < -m.pipeWidth) {
+        if (pipe.x < -m.pipeCapWidth) {
           world.pipes.splice(i, 1);
         } else if (intersectsPipe(pipe)) {
           return events ? events.concat(beginDeath()) : beginDeath();

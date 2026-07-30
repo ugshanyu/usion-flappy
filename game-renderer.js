@@ -58,9 +58,9 @@
       var m = world.metrics;
       var top = pipe.cy - pipe.gap / 2;
       var bottom = pipe.cy + pipe.gap / 2;
-      var bodyWidth = m.pipeWidth + 4 * m.scale;
-      var capWidth = bodyWidth * 1.18;
-      var capHeight = capWidth * pipeCapTexture.height / pipeCapTexture.width;
+      var bodyWidth = m.pipeWidth;
+      var capWidth = m.pipeCapWidth;
+      var capHeight = m.pipeCapHeight;
       var topBodyHeight = Math.max(1, top - capHeight * 0.56 + 10);
       var bottomBodyY = bottom + capHeight * 0.56;
 

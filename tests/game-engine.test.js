@@ -72,6 +72,78 @@ test('motion ratios scale from width rather than refresh rate or screen height',
   assert.equal(tablet.world.metrics.birdDrawWidth, phone.world.metrics.birdDrawWidth * 1.6);
 });
 
+test('base-width obstacle geometry uses the reference difficulty targets', function () {
+  var engine = FlappyEngine.create({ width: 390, height: 844 });
+  var metrics = engine.world.metrics;
+
+  assert.equal(metrics.pipeGap, 135);
+  assert.equal(metrics.pipeSpeed, 173);
+  assert.equal(metrics.pipeSpacing, 195);
+  assert.equal(metrics.pipeWidth, 72);
+  assert.equal(metrics.pipeCapWidth, 85);
+  assert.equal(metrics.pipeCapHeight, 38);
+  assert.equal(metrics.maxPipeShift, 190);
+  assert.equal(metrics.birdHitWidth, 40);
+  assert.equal(metrics.birdHitHeight, 28);
+  assert.equal(metrics.pipeGap - metrics.birdHitHeight, 107);
+});
+
+test('the first pipe uses the full random range instead of being centered', function () {
+  var engine = FlappyEngine.create({
+    width: 390,
+    height: 5000,
+    random: function () { return 0; }
+  });
+  engine.flap();
+  advance(engine, 0.3);
+
+  assert.equal(engine.world.pipes.length, 1);
+  assert.equal(
+    engine.world.pipes[0].cy,
+    engine.world.metrics.pipeMargin + engine.world.metrics.pipeGap / 2
+  );
+});
+
+test('adjacent pipe shifts are challenging but remain bounded', function () {
+  var values = [0, 1];
+  var engine = FlappyEngine.create({
+    width: 390,
+    height: 5000,
+    random: function () { return values.shift(); }
+  });
+  engine.flap();
+  advance(engine, 1.45);
+
+  assert.equal(engine.world.pipes.length, 2);
+  assert.equal(
+    engine.world.pipes[1].cy - engine.world.pipes[0].cy,
+    engine.world.metrics.maxPipeShift
+  );
+});
+
+test('the rendered pipe cap width participates in collisions', function () {
+  var engine = FlappyEngine.create({
+    width: 390,
+    height: 5000,
+    random: function () { return 0.5; }
+  });
+  engine.flap();
+  advance(engine, 0.3);
+
+  var metrics = engine.world.metrics;
+  var pipe = engine.world.pipes[0];
+  var top = pipe.cy - pipe.gap / 2;
+  pipe.x = metrics.birdX + 59 + metrics.pipeSpeed * STEP;
+  pipe.previousX = pipe.x;
+  engine.world.bird.y = top - metrics.birdHitHeight / 2 + 1;
+  engine.world.bird.previousY = engine.world.bird.y;
+  engine.world.bird.velocityY = 0;
+
+  var events = engine.step(STEP);
+
+  assert.ok(events.some(function (event) { return event.type === 'hit'; }));
+});
+
 test('a collision transitions through a visible falling death sequence', function () {
   var engine = FlappyEngine.create({ width: 390, height: 844 });
   engine.flap();

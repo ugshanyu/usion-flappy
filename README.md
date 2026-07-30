@@ -25,13 +25,16 @@ locally in `vendor/pixi/8.19.0`, so gameplay does not depend on a third-party
 CDN. The scene uses one ticker, one bird sprite, pooled pipe containers, and no
 physics plugin or Pixi pointer hit-testing.
 
-The original-style motion model lives in `game-engine.js`. Physics runs at a
+The reference-tuned motion model lives in `game-engine.js`. Physics runs at a
 fixed 120 Hz and rendering interpolates on every display refresh, so movement
-keeps the same timing on 60/90/120/144 Hz screens. Flap strength, gravity,
-sprite size, pipe speed, and spacing scale from viewport width; pipe speed stays
-constant as score rises. The bird rotates gradually and visibly falls after a
-collision before the score panel appears. Long browser stalls are discarded
-instead of fast-forwarding into a collision.
+keeps the same timing on 60/90/120/144 Hz screens. The flap arc stays close to
+the classic 30 FPS implementation while tighter gaps, reference-scale collision
+geometry, closer pipe cadence, and larger vertical transitions preserve its
+precision challenge. Flap strength, gravity, sprite size, pipe speed, and
+spacing scale from viewport width; pipe speed stays constant as score rises.
+The bird rotates gradually and visibly falls after a collision before the score
+panel appears. Long browser stalls are discarded instead of fast-forwarding
+into a collision.
 
 Pointer input is isolated from rendering: a tap only queues a flap flag, which
 the next fixed physics step consumes. The CSS background stays static, pipe
